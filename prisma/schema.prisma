@@ -1,0 +1,358 @@
+// Модель данных — перенос docs/schema.sql (PostgreSQL).
+// Деньги — ТОЛЬКО BigInt в тиынах (поля *Minor). date_cashflow (ДДС) ≠ period_pnl (ОПУ).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserStatus {
+  active
+  invited
+  disabled
+
+  @@map("user_status")
+}
+
+enum MemberRole {
+  owner
+  consultant
+  accountant
+  manager
+  viewer
+  investor
+
+  @@map("member_role")
+}
+
+enum AccountType {
+  bank
+  cash
+  card
+  deposit
+  reserve
+  owner_personal
+  other
+
+  @@map("account_type")
+}
+
+enum CategoryType {
+  income
+  expense
+  transfer
+
+  @@map("category_type")
+}
+
+enum TxnType {
+  income
+  expense
+  transfer
+
+  @@map("txn_type")
+}
+
+enum ProjectStatus {
+  new
+  in_progress
+  on_hold
+  done
+  cancelled
+  paid
+  has_debt
+
+  @@map("project_status")
+}
+
+enum ExpensePlanType {
+  fixed
+  percent_of_revenue
+  per_unit
+  one_time
+  payroll
+  tax
+  debt_interest
+
+  @@map("expense_plan_type")
+}
+
+enum InvestmentSection {
+  capex
+  launch
+  operating_buffer
+  reserve
+  other
+
+  @@map("investment_section")
+}
+
+// Группа статьи для ОПУ (расширение схемы: нужна для формул 6.2 SPEC —
+// переменные/постоянные/ФОТ/налоги/проценты/амортизация не выводимы из базовой схемы).
+enum PnlGroup {
+  revenue
+  variable
+  fixed
+  payroll
+  tax
+  interest
+  depreciation
+  other
+
+  @@map("pnl_group")
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  name         String
+  email        String?    @unique
+  phone        String?    @unique
+  passwordHash String?    @map("password_hash")
+  status       UserStatus @default(active)
+  locale       String     @default("ru")
+  createdAt    DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  ownedCompanies Company[]       @relation("CompanyOwner")
+  memberships    CompanyMember[] @relation("MemberUser")
+  invitesSent    CompanyMember[] @relation("MemberInvitedBy")
+
+  @@map("users")
+}
+
+model Company {
+  id                  String   @id @default(uuid()) @db.Uuid
+  ownerUserId         String   @map("owner_user_id") @db.Uuid
+  name                String
+  industry            String?
+  currency            String   @default("KZT")
+  accountingStartDate DateTime @map("accounting_start_date") @db.Date
+  timezone            String   @default("Asia/Almaty")
+  taxRegime           String?  @map("tax_regime")
+  capexMode           String   @default("simple") @map("capex_mode")
+  projectsEnabled     Boolean  @default(false) @map("projects_enabled")
+  investmentsEnabled  Boolean  @default(false) @map("investments_enabled")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  owner          User             @relation("CompanyOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
+  members        CompanyMember[]
+  accounts       Account[]
+  categories     Category[]
+  counterparties Counterparty[]
+  products       Product[]
+  projects       Project[]
+  transactions   Transaction[]
+  snapshots      ReportSnapshot[]
+
+  @@map("companies")
+}
+
+model CompanyMember {
+  id        String     @id @default(uuid()) @db.Uuid
+  companyId String     @map("company_id") @db.Uuid
+  userId    String     @map("user_id") @db.Uuid
+  role      MemberRole
+  invitedBy String?    @map("invited_by") @db.Uuid
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user      User    @relation("MemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  invitedByUser User? @relation("MemberInvitedBy", fields: [invitedBy], references: [id])
+
+  @@unique([companyId, userId])
+  @@map("company_members")
+}
+
+model Account {
+  id                  String      @id @default(uuid()) @db.Uuid
+  companyId           String      @map("company_id") @db.Uuid
+  name                String
+  type                AccountType @default(bank)
+  currency            String      @default("KZT")
+  openingBalanceMinor BigInt      @default(0) @map("opening_balance_minor")
+  openingBalanceDate  DateTime    @map("opening_balance_date") @db.Date
+  isActive            Boolean     @default(true) @map("is_active")
+  createdAt           DateTime    @default(now()) @map("created_at") @db.Timestamptz
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  txnsFrom     Transaction[] @relation("TxnAccountFrom")
+  txnsTo       Transaction[] @relation("TxnAccountTo")
+
+  @@index([companyId])
+  @@map("accounts")
+}
+
+model Category {
+  id              String       @id @default(uuid()) @db.Uuid
+  companyId       String       @map("company_id") @db.Uuid
+  type            CategoryType
+  parentId        String?      @map("parent_id") @db.Uuid
+  name            String
+  affectsPnl      Boolean      @default(true) @map("affects_pnl")
+  affectsCashflow Boolean      @default(true) @map("affects_cashflow")
+  isCapex         Boolean      @default(false) @map("is_capex")
+  isTransfer      Boolean      @default(false) @map("is_transfer")
+  isActive        Boolean      @default(true) @map("is_active")
+  pnlGroup        PnlGroup     @default(other) @map("pnl_group")
+  createdAt       DateTime     @default(now()) @map("created_at") @db.Timestamptz
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  parent       Category?     @relation("CategoryChildren", fields: [parentId], references: [id], onDelete: SetNull)
+  children     Category[]    @relation("CategoryChildren")
+  transactions Transaction[]
+
+  @@index([companyId])
+  @@map("categories")
+}
+
+model Counterparty {
+  id        String  @id @default(uuid()) @db.Uuid
+  companyId String  @map("company_id") @db.Uuid
+  name      String
+  type      String?
+  contact   String?
+  isActive  Boolean @default(true) @map("is_active")
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([companyId])
+  @@map("counterparties")
+}
+
+model Product {
+  id               String  @id @default(uuid()) @db.Uuid
+  companyId        String  @map("company_id") @db.Uuid
+  name             String
+  unit             String?
+  basePriceMinor   BigInt  @default(0) @map("base_price_minor")
+  costPerUnitMinor BigInt  @default(0) @map("cost_per_unit_minor")
+  isActive         Boolean @default(true) @map("is_active")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@map("products")
+}
+
+model Project {
+  id                 String        @id @default(uuid()) @db.Uuid
+  companyId          String        @map("company_id") @db.Uuid
+  projectNumber      String?       @map("project_number")
+  customerName       String?       @map("customer_name")
+  description        String?
+  category           String?
+  contractValueMinor BigInt        @default(0) @map("contract_value_minor")
+  status             ProjectStatus @default(new)
+  orderDate          DateTime?     @map("order_date") @db.Date
+  closeDate          DateTime?     @map("close_date") @db.Date
+  responsibleUserId  String?       @map("responsible_user_id") @db.Uuid
+  plannedCostMinor   BigInt        @default(0) @map("planned_cost_minor")
+  comment            String?
+  createdAt          DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+
+  @@index([companyId])
+  @@map("projects")
+}
+
+model Transaction {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  dateCashflow      DateTime @map("date_cashflow") @db.Date
+  periodPnl         DateTime? @map("period_pnl") @db.Date
+  type              TxnType
+  categoryId        String?  @map("category_id") @db.Uuid
+  amountMinor       BigInt   @map("amount_minor")
+  accountFromId     String?  @map("account_from_id") @db.Uuid
+  accountToId       String?  @map("account_to_id") @db.Uuid
+  projectId         String?  @map("project_id") @db.Uuid
+  counterpartyId    String?  @map("counterparty_id") @db.Uuid
+  comment           String?
+  attachmentUrl     String?  @map("attachment_url")
+  includeInPnl      Boolean  @default(true) @map("include_in_pnl")
+  includeInCashflow Boolean  @default(true) @map("include_in_cashflow")
+  createdBy         String?  @map("created_by") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  category     Category?     @relation(fields: [categoryId], references: [id])
+  accountFrom  Account?      @relation("TxnAccountFrom", fields: [accountFromId], references: [id])
+  accountTo    Account?      @relation("TxnAccountTo", fields: [accountToId], references: [id])
+  project      Project?      @relation(fields: [projectId], references: [id])
+  counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
+
+  @@index([companyId, dateCashflow])
+  @@index([companyId, periodPnl])
+  @@index([projectId])
+  @@map("transactions")
+}
+
+model ReportSnapshot {
+  id                  String   @id @default(uuid()) @db.Uuid
+  companyId           String   @map("company_id") @db.Uuid
+  period              DateTime @db.Date
+  isClosed            Boolean  @default(true) @map("is_closed")
+  revenueMinor        BigInt   @default(0) @map("revenue_minor")
+  expensesMinor       BigInt   @default(0) @map("expenses_minor")
+  netProfitMinor      BigInt   @default(0) @map("net_profit_minor")
+  cashInMinor         BigInt   @default(0) @map("cash_in_minor")
+  cashOutMinor        BigInt   @default(0) @map("cash_out_minor")
+  openingBalanceMinor BigInt   @default(0) @map("opening_balance_minor")
+  closingBalanceMinor BigInt   @default(0) @map("closing_balance_minor")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, period])
+  @@map("report_snapshots")
+}
+
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  companyId  String?  @map("company_id") @db.Uuid
+  userId     String?  @map("user_id") @db.Uuid
+  entity     String
+  entityId   String?  @map("entity_id") @db.Uuid
+  action     String
+  beforeJson Json?    @map("before_json")
+  afterJson  Json?    @map("after_json")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([companyId, createdAt])
+  @@map("audit_log")
+}
+
+model DashboardConfig {
+  id         String   @id @default(uuid()) @db.Uuid
+  companyId  String   @map("company_id") @db.Uuid
+  name       String   @default("default")
+  createdBy  String?  @map("created_by") @db.Uuid
+  configJson Json     @default("{}") @map("config_json")
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([companyId])
+  @@map("dashboard_configs")
+}
+
+model ShareLink {
+  id                String     @id @default(uuid()) @db.Uuid
+  companyId         String     @map("company_id") @db.Uuid
+  token             String     @unique
+  role              MemberRole @default(viewer)
+  dashboardConfigId String?    @map("dashboard_config_id") @db.Uuid
+  canEditInputs     Boolean    @default(true) @map("can_edit_inputs")
+  createdBy         String?    @map("created_by") @db.Uuid
+  expiresAt         DateTime?  @map("expires_at") @db.Timestamptz
+  createdAt         DateTime   @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([companyId])
+  @@map("share_links")
+}

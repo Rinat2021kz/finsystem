@@ -1,0 +1,33 @@
+{
+  "name": "finsystem",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Управленческая финансовая система для малого бизнеса Казахстана",
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "start": "next start",
+    "test": "vitest run",
+    "postinstall": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate deploy"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.8.2",
+    "bcryptjs": "^3.0.2",
+    "exceljs": "^4.4.0",
+    "next": "^15.3.3",
+    "next-auth": "^5.0.0-beta.28",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "prisma": "^6.8.2",
+    "typescript": "^5.8.3",
+    "vitest": "^3.1.4"
+  }
+}
