@@ -18,11 +18,13 @@ export function TransactionForm({
   accounts,
   categories,
   counterparties,
+  projects = [],
 }: {
   type: "income" | "expense" | "transfer";
   accounts: Option[];
   categories: Option[];
   counterparties: Option[];
+  projects?: Option[];
 }) {
   const [state, action, pending] = useActionState<TxnFormState, FormData>(
     createTransactionAction,
@@ -102,6 +104,19 @@ export function TransactionForm({
                 ))}
               </select>
             </label>
+            {projects.length > 0 && (
+              <label className="field">
+                Проект
+                <select name="projectId" defaultValue="">
+                  <option value="">—</option>
+                  {projects.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {counterparties.length > 0 && (
               <label className="field">
                 Контрагент

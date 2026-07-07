@@ -25,7 +25,7 @@ export default async function TransactionsPage({
   const params = await searchParams;
   const addType = (["income", "expense", "transfer"] as const).find((t) => t === params.add);
 
-  const [accounts, categories, counterparties] = await Promise.all([
+  const [accounts, categories, counterparties, company, projects] = await Promise.all([
     prisma.account.findMany({
       where: { companyId: tenant.companyId, isActive: true },
       orderBy: { createdAt: "asc" },
@@ -37,6 +37,14 @@ export default async function TransactionsPage({
     prisma.counterparty.findMany({
       where: { companyId: tenant.companyId, isActive: true },
       orderBy: { name: "asc" },
+    }),
+    prisma.company.findUnique({ where: { id: tenant.companyId } }),
+    prisma.project.findMany({
+      where: {
+        companyId: tenant.companyId,
+        status: { notIn: ["cancelled", "done", "paid"] },
+      },
+      orderBy: { createdAt: "desc" },
     }),
   ]);
 
@@ -95,6 +103,14 @@ export default async function TransactionsPage({
             .filter((c) => c.type === addType)
             .map((c) => ({ id: c.id, name: c.name }))}
           counterparties={counterparties.map((c) => ({ id: c.id, name: c.name }))}
+          projects={
+            company?.projectsEnabled
+              ? projects.map((p) => ({
+                  id: p.id,
+                  name: `${p.projectNumber ? `${p.projectNumber} — ` : ""}${p.customerName ?? "Проект"}`,
+                }))
+              : []
+          }
         />
       )}
 

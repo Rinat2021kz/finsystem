@@ -21,6 +21,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         </div>
         <Link href="/dashboard">Дашборд</Link>
         <Link href="/transactions">Операции</Link>
+        {company.projectsEnabled && <Link href="/projects">Проекты</Link>}
         <div className="section">Отчёты</div>
         <Link href="/reports/cashflow">ДДС</Link>
         <Link href="/reports/pnl">ОПУ</Link>

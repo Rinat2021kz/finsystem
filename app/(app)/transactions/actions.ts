@@ -20,6 +20,7 @@ const baseSchema = z.object({
   accountFromId: z.string().uuid().optional(),
   accountToId: z.string().uuid().optional(),
   counterpartyId: z.string().uuid().optional(),
+  projectId: z.string().uuid().optional(),
   comment: z.string().trim().max(500).optional(),
 });
 
@@ -50,6 +51,7 @@ export async function createTransactionAction(
     accountFromId: formData.get("accountFromId") || undefined,
     accountToId: formData.get("accountToId") || undefined,
     counterpartyId: formData.get("counterpartyId") || undefined,
+    projectId: formData.get("projectId") || undefined,
     comment: formData.get("comment") || undefined,
   });
   if (!parsed.success) {
@@ -88,6 +90,12 @@ export async function createTransactionAction(
   if (d.categoryId && !category) return { error: "Категория не найдена" };
   if (d.accountFromId && !accFrom) return { error: "Счёт списания не найден" };
   if (d.accountToId && !accTo) return { error: "Счёт зачисления не найден" };
+  if (d.projectId) {
+    const project = await prisma.project.findFirst({
+      where: { id: d.projectId, companyId: tenant.companyId },
+    });
+    if (!project) return { error: "Проект не найден" };
+  }
 
   // закрытый месяц неизменяем (правило 5)
   const closedError = await assertMonthsOpen(tenant.companyId, [d.dateCashflow, periodPnl]);
@@ -105,6 +113,7 @@ export async function createTransactionAction(
       accountFromId: d.type === "income" ? null : (d.accountFromId ?? null),
       accountToId: d.type === "expense" ? null : (d.accountToId ?? null),
       counterpartyId: d.counterpartyId ?? null,
+      projectId: d.type === "transfer" ? null : (d.projectId ?? null),
       comment: d.comment ?? null,
       createdBy: tenant.userId,
     },
