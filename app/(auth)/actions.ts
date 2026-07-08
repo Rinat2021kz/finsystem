@@ -32,7 +32,18 @@ export async function registerAction(
   const { name, email, password } = parsed.data;
 
   const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) return { error: "Пользователь с таким e-mail уже зарегистрирован" };
+  if (existing) {
+    // приглашённый участник без пароля завершает регистрацию на тот же e-mail
+    if (existing.status === "invited" && !existing.passwordHash) {
+      await prisma.user.update({
+        where: { id: existing.id },
+        data: { name, passwordHash: await hash(password, 10), status: "active" },
+      });
+      await signIn("credentials", { email, password, redirect: false });
+      redirect("/dashboard");
+    }
+    return { error: "Пользователь с таким e-mail уже зарегистрирован" };
+  }
 
   await prisma.user.create({
     data: { name, email, passwordHash: await hash(password, 10) },

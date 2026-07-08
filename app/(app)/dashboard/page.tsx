@@ -1,4 +1,5 @@
-import { requireTenant } from "@/lib/tenancy";
+import { requireTenant, isAdmin } from "@/lib/tenancy";
+import { saveDashboardCommentAction } from "../actions";
 import { loadCalcData, periodFromSearchParams } from "@/lib/reports";
 import { cashflowSummary } from "@/lib/calc/cashflow";
 import { pnlForMonth } from "@/lib/calc/pnl";
@@ -49,12 +50,49 @@ export default async function DashboardPage({
   const netFlow = cf.cashInMinor - cf.cashOutMinor;
   const hasAnyData = txns.length > 0;
 
+  // комментарий консультанта (слой понимания, SPEC 4.11)
+  const dashboardConfig = await prisma.dashboardConfig.findFirst({
+    where: { companyId: tenant.companyId, name: "default" },
+  });
+  const consultantComment =
+    dashboardConfig &&
+    typeof dashboardConfig.configJson === "object" &&
+    dashboardConfig.configJson !== null
+      ? String((dashboardConfig.configJson as Record<string, unknown>).consultantComment ?? "")
+      : "";
+  const admin = isAdmin(tenant.role);
+
   return (
     <>
       <h1>Дашборд</h1>
       <p className="page-sub">Ключевые показатели за {formatMonthRu(start)}</p>
       <PeriodPicker year={year} month={month} action="/dashboard" />
 
+      {consultantComment && (
+        <div className="alert info">
+          <strong>Комментарий консультанта:</strong> {consultantComment}
+        </div>
+      )}
+      {admin && (
+        <details className="panel no-print" style={{ padding: 12 }}>
+          <summary style={{ cursor: "pointer", fontSize: "0.9rem" }}>
+            {consultantComment ? "Изменить комментарий консультанта" : "Добавить комментарий консультанта"}
+          </summary>
+          <form action={saveDashboardCommentAction} style={{ marginTop: 10 }}>
+            <textarea
+              name="comment"
+              defaultValue={consultantComment}
+              rows={3}
+              maxLength={1000}
+              style={{ width: "100%", marginBottom: 8 }}
+              placeholder="Расшифруйте цифры словами: что происходит и что делать дальше"
+            />
+            <button type="submit" className="secondary">
+              Сохранить
+            </button>
+          </form>
+        </details>
+      )}
       {!hasAnyData && (
         <div className="alert info">
           Данных пока нет. Добавьте первые операции на странице «Операции» — отчёты посчитаются

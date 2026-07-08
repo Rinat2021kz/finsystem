@@ -3,12 +3,18 @@ import { redirect } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireTenant } from "@/lib/tenancy";
 import { signOut } from "@/lib/auth";
+import { switchCompanyAction } from "./actions";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const tenant = await requireTenant();
-  const [company, user] = await Promise.all([
+  const [company, user, memberships] = await Promise.all([
     prisma.company.findUnique({ where: { id: tenant.companyId } }),
     prisma.user.findUnique({ where: { id: tenant.userId } }),
+    prisma.companyMember.findMany({
+      where: { userId: tenant.userId },
+      include: { company: { select: { id: true, name: true } } },
+      orderBy: { createdAt: "asc" },
+    }),
   ]);
   if (!company) redirect("/onboarding");
 
@@ -19,6 +25,24 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           ФинУчёт
           <small>{company.name}</small>
         </div>
+        {memberships.length > 1 && (
+          <form action={switchCompanyAction} style={{ padding: "0 10px 10px" }}>
+            <select
+              name="companyId"
+              defaultValue={company.id}
+              style={{ width: "100%", fontSize: "0.85rem" }}
+            >
+              {memberships.map((m) => (
+                <option key={m.company.id} value={m.company.id}>
+                  {m.company.name}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="secondary" style={{ marginTop: 6, width: "100%" }}>
+              Перейти
+            </button>
+          </form>
+        )}
         <Link href="/dashboard">Дашборд</Link>
         <Link href="/transactions">Операции</Link>
         {company.projectsEnabled && <Link href="/projects">Проекты</Link>}
@@ -37,6 +61,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Link href="/settings/categories">Категории</Link>
         <Link href="/settings/products">Продукты</Link>
         <Link href="/settings/counterparties">Контрагенты</Link>
+        <Link href="/settings/team">Команда и доступ</Link>
         <div className="spacer" />
         <div className="user">
           {user?.name}
