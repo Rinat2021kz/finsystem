@@ -294,6 +294,72 @@ model Transaction {
   @@map("transactions")
 }
 
+model SalesPlan {
+  id                String   @id @default(uuid()) @db.Uuid
+  companyId         String   @map("company_id") @db.Uuid
+  productId         String?  @map("product_id") @db.Uuid
+  month             DateTime @db.Date
+  plannedPriceMinor BigInt   @default(0) @map("planned_price_minor")
+  plannedQuantity   Decimal  @default(0) @map("planned_quantity") @db.Decimal(14, 2)
+  growthRate        Decimal  @default(0) @map("growth_rate") @db.Decimal(9, 4)
+  seasonalityFactor Decimal  @default(1) @map("seasonality_factor") @db.Decimal(9, 4)
+
+  @@index([companyId, month])
+  @@map("sales_plan")
+}
+
+model ExpensePlan {
+  id                 String          @id @default(uuid()) @db.Uuid
+  companyId          String          @map("company_id") @db.Uuid
+  categoryId         String?         @map("category_id") @db.Uuid
+  month              DateTime        @db.Date
+  expenseType        ExpensePlanType @map("expense_type")
+  amountMinor        BigInt?         @default(0) @map("amount_minor")
+  percentOfRevenue   Decimal?        @map("percent_of_revenue") @db.Decimal(9, 4)
+  amountPerUnitMinor BigInt?         @map("amount_per_unit_minor")
+  productId          String?         @map("product_id") @db.Uuid
+  comment            String?
+
+  @@index([companyId, month])
+  @@map("expense_plan")
+}
+
+model InvestmentModel {
+  id                     String   @id @default(uuid()) @db.Uuid
+  companyId              String   @map("company_id") @db.Uuid
+  name                   String
+  startMonth             DateTime @map("start_month") @db.Date
+  horizonMonths          Int      @default(12) @map("horizon_months")
+  valuationMethod        String?  @map("valuation_method")
+  companyValuationMinor  BigInt?  @default(0) @map("company_valuation_minor")
+  investmentAmountMinor  BigInt?  @default(0) @map("investment_amount_minor")
+  dividendPolicyPercent  Decimal? @default(0) @map("dividend_policy_percent") @db.Decimal(9, 4)
+  investorShare          Decimal? @default(0) @map("investor_share") @db.Decimal(9, 4)
+  createdAt              DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  items InvestmentItem[]
+
+  @@index([companyId])
+  @@map("investment_models")
+}
+
+model InvestmentItem {
+  id                String            @id @default(uuid()) @db.Uuid
+  companyId         String            @map("company_id") @db.Uuid
+  investmentModelId String            @map("investment_model_id") @db.Uuid
+  section           InvestmentSection
+  itemName          String            @map("item_name")
+  monthlyCostMinor  BigInt            @default(0) @map("monthly_cost_minor")
+  monthsCount       Int               @default(1) @map("months_count")
+  totalCostMinor    BigInt            @default(0) @map("total_cost_minor")
+  comment           String?
+
+  model InvestmentModel @relation(fields: [investmentModelId], references: [id], onDelete: Cascade)
+
+  @@index([investmentModelId])
+  @@map("investment_items")
+}
+
 model ReportSnapshot {
   id                  String   @id @default(uuid()) @db.Uuid
   companyId           String   @map("company_id") @db.Uuid

@@ -22,6 +22,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Link href="/dashboard">Дашборд</Link>
         <Link href="/transactions">Операции</Link>
         {company.projectsEnabled && <Link href="/projects">Проекты</Link>}
+        <div className="section">Планирование</div>
+        <Link href="/planning/sales">План продаж</Link>
+        <Link href="/planning/expenses">План расходов</Link>
+        <Link href="/planning/compare">План / факт</Link>
+        {company.investmentsEnabled && <Link href="/investments">Инвестиции</Link>}
         <div className="section">Отчёты</div>
         <Link href="/reports/cashflow">ДДС</Link>
         <Link href="/reports/pnl">ОПУ</Link>
@@ -29,6 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <div className="section">Справочники</div>
         <Link href="/settings/accounts">Счета</Link>
         <Link href="/settings/categories">Категории</Link>
+        <Link href="/settings/products">Продукты</Link>
         <Link href="/settings/counterparties">Контрагенты</Link>
         <div className="spacer" />
         <div className="user">

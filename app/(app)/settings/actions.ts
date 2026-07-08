@@ -119,6 +119,48 @@ export async function toggleCategoryAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/categories");
 }
 
+const productSchema = z.object({
+  name: z.string().trim().min(1),
+  unit: z.string().trim().max(20).optional(),
+});
+
+export async function createProductAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const parsed = productSchema.safeParse({
+    name: formData.get("name"),
+    unit: formData.get("unit") || undefined,
+  });
+  if (!parsed.success) return;
+
+  const basePrice = parseTenge(String(formData.get("basePrice") ?? "0").trim() || "0") ?? 0n;
+  const costPerUnit = parseTenge(String(formData.get("costPerUnit") ?? "0").trim() || "0") ?? 0n;
+
+  await prisma.product.create({
+    data: {
+      companyId: tenant.companyId,
+      name: parsed.data.name,
+      unit: parsed.data.unit ?? null,
+      basePriceMinor: basePrice >= 0n ? basePrice : 0n,
+      costPerUnitMinor: costPerUnit >= 0n ? costPerUnit : 0n,
+    },
+  });
+  revalidatePath("/settings/products");
+}
+
+export async function toggleProductAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+  const id = String(formData.get("id") ?? "");
+  const product = await prisma.product.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!product) return;
+  await prisma.product.update({ where: { id }, data: { isActive: !product.isActive } });
+  revalidatePath("/settings/products");
+}
+
 const counterpartySchema = z.object({
   name: z.string().trim().min(1),
   type: z.string().trim().optional(),
