@@ -27,6 +27,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Link href="/planning/expenses">План расходов</Link>
         <Link href="/planning/compare">План / факт</Link>
         {company.investmentsEnabled && <Link href="/investments">Инвестиции</Link>}
+        <Link href="/calculators">Калькуляторы</Link>
         <div className="section">Отчёты</div>
         <Link href="/reports/cashflow">ДДС</Link>
         <Link href="/reports/pnl">ОПУ</Link>
