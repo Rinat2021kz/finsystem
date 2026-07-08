@@ -5,7 +5,11 @@ import { requireTenant, canWrite } from "@/lib/tenancy";
 import { formatMoney } from "@/lib/money";
 import { rowRevenueMinor } from "@/lib/calc/sales";
 import { MONTH_NAMES_RU, formatMonthRu } from "@/lib/period";
-import { generateSalesPlanAction, deleteSalesPlanRowAction } from "../actions";
+import {
+  generateSalesPlanAction,
+  deleteSalesPlanRowAction,
+  updateSalesPlanRowAction,
+} from "../actions";
 
 export default async function SalesPlanPage({
   searchParams,
@@ -138,6 +142,7 @@ export default async function SalesPlanPage({
               <th>Продукт</th>
               <th className="num">Количество</th>
               <th className="num">Цена</th>
+              <th className="num">Сезонность</th>
               <th className="num">Плановая выручка</th>
               {writable && <th />}
             </tr>
@@ -145,7 +150,7 @@ export default async function SalesPlanPage({
           <tbody>
             {rows.length === 0 && (
               <tr>
-                <td colSpan={6} className="muted">
+                <td colSpan={7} className="muted">
                   Плана на {year} год пока нет
                 </td>
               </tr>
@@ -161,16 +166,61 @@ export default async function SalesPlanPage({
                   seasonalityFactor: Number(r.seasonalityFactor),
                 });
                 monthTotal += revenue;
+                const formId = `row-${r.id}`;
                 return (
                   <tr key={r.id}>
                     <td>{formatMonthRu(r.month)}</td>
                     <td>{r.productId ? (productNames.get(r.productId) ?? "—") : "—"}</td>
-                    <td className="num">{Number(r.plannedQuantity).toLocaleString("ru-RU")}</td>
-                    <td className="num">{formatMoney(r.plannedPriceMinor)}</td>
+                    <td className="num">
+                      {writable ? (
+                        <input
+                          name="quantity"
+                          form={formId}
+                          defaultValue={Number(r.plannedQuantity)}
+                          inputMode="decimal"
+                          style={{ width: 80, textAlign: "right" }}
+                        />
+                      ) : (
+                        Number(r.plannedQuantity).toLocaleString("ru-RU")
+                      )}
+                    </td>
+                    <td className="num">
+                      {writable ? (
+                        <input
+                          name="price"
+                          form={formId}
+                          defaultValue={(r.plannedPriceMinor / 100n).toString()}
+                          inputMode="numeric"
+                          style={{ width: 110, textAlign: "right" }}
+                        />
+                      ) : (
+                        formatMoney(r.plannedPriceMinor)
+                      )}
+                    </td>
+                    <td className="num">
+                      {writable ? (
+                        <input
+                          name="seasonality"
+                          form={formId}
+                          defaultValue={Number(r.seasonalityFactor)}
+                          inputMode="decimal"
+                          title="1 — обычный месяц, 1.3 — сезон +30 %, 0.7 — спад −30 %"
+                          style={{ width: 64, textAlign: "right" }}
+                        />
+                      ) : (
+                        Number(r.seasonalityFactor).toLocaleString("ru-RU")
+                      )}
+                    </td>
                     <td className="num">{formatMoney(revenue)}</td>
                     {writable && (
-                      <td>
-                        <form action={deleteSalesPlanRowAction}>
+                      <td style={{ whiteSpace: "nowrap" }}>
+                        <form id={formId} action={updateSalesPlanRowAction} style={{ display: "inline" }}>
+                          <input type="hidden" name="id" value={r.id} />
+                          <button type="submit" className="secondary" title="Сохранить строку">
+                            💾
+                          </button>
+                        </form>{" "}
+                        <form action={deleteSalesPlanRowAction} style={{ display: "inline" }}>
                           <input type="hidden" name="id" value={r.id} />
                           <button type="submit" className="secondary" title="Удалить">
                             ✕
@@ -186,7 +236,7 @@ export default async function SalesPlanPage({
                 <Fragment key={key}>
                   {cells}
                   <tr className="total">
-                    <td colSpan={4}>Итого за {formatMonthRu(list[0].month)}</td>
+                    <td colSpan={5}>Итого за {formatMonthRu(list[0].month)}</td>
                     <td className="num">{formatMoney(monthTotal)}</td>
                     {writable && <td />}
                   </tr>
@@ -195,7 +245,7 @@ export default async function SalesPlanPage({
             })}
             {rows.length > 0 && (
               <tr className="total">
-                <td colSpan={4}>Итого за {year} год</td>
+                <td colSpan={5}>Итого за {year} год</td>
                 <td className="num">{formatMoney(yearTotal)}</td>
                 {writable && <td />}
               </tr>

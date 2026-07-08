@@ -7,6 +7,7 @@ import {
   inviteMemberAction,
   removeMemberAction,
   revokeShareLinkAction,
+  saveBrandAction,
 } from "./actions";
 
 const ROLE_LABELS: Record<string, string> = {
@@ -22,7 +23,7 @@ export default async function TeamPage() {
   const tenant = await requireTenant();
   const admin = isAdmin(tenant.role);
 
-  const [members, links, headerList] = await Promise.all([
+  const [members, links, headerList, dashboardConfig] = await Promise.all([
     prisma.companyMember.findMany({
       where: { companyId: tenant.companyId },
       include: { user: true },
@@ -33,7 +34,16 @@ export default async function TeamPage() {
       orderBy: { createdAt: "desc" },
     }),
     headers(),
+    prisma.dashboardConfig.findFirst({
+      where: { companyId: tenant.companyId, name: "default" },
+    }),
   ]);
+  const brandLine =
+    dashboardConfig &&
+    typeof dashboardConfig.configJson === "object" &&
+    dashboardConfig.configJson !== null
+      ? String((dashboardConfig.configJson as Record<string, unknown>).brandLine ?? "")
+      : "";
 
   const host = headerList.get("x-forwarded-host") ?? headerList.get("host") ?? "";
   const proto = headerList.get("x-forwarded-proto") ?? "https";
@@ -126,6 +136,24 @@ export default async function TeamPage() {
               <input name="expiresDays" type="number" min={0} max={365} defaultValue={30} />
             </label>
             <button type="submit">Создать ссылку</button>
+          </div>
+        </form>
+      )}
+      {admin && (
+        <form action={saveBrandAction} className="panel">
+          <div className="form-grid">
+            <label className="field">
+              Подпись на клиентских ссылках (white-label: имя консультанта или бренд)
+              <input
+                name="brandLine"
+                defaultValue={brandLine}
+                maxLength={200}
+                placeholder="Например: Финансовый консультант Ринат Гасимов"
+              />
+            </label>
+            <button type="submit" className="secondary">
+              Сохранить подпись
+            </button>
           </div>
         </form>
       )}

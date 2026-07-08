@@ -83,6 +83,38 @@ export async function removeMemberAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/team");
 }
 
+/** White-label: подпись консультанта/бренда на клиентских ссылках (SPEC раздел 15). */
+export async function saveBrandAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const brandLine = String(formData.get("brandLine") ?? "").trim().slice(0, 200);
+  const existing = await prisma.dashboardConfig.findFirst({
+    where: { companyId: tenant.companyId, name: "default" },
+  });
+
+  if (existing) {
+    const config =
+      typeof existing.configJson === "object" && existing.configJson !== null
+        ? (existing.configJson as Record<string, unknown>)
+        : {};
+    await prisma.dashboardConfig.update({
+      where: { id: existing.id },
+      data: { configJson: { ...config, brandLine } },
+    });
+  } else {
+    await prisma.dashboardConfig.create({
+      data: {
+        companyId: tenant.companyId,
+        name: "default",
+        createdBy: tenant.userId,
+        configJson: { brandLine },
+      },
+    });
+  }
+  revalidatePath("/settings/team");
+}
+
 const linkSchema = z.object({
   expiresDays: z.coerce.number().int().min(0).max(365),
 });

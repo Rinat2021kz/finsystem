@@ -42,7 +42,7 @@ export async function generateSalesPlanAction(formData: FormData): Promise<void>
   const price = parseTenge(String(formData.get("price") ?? "").trim());
   if (price === null || price <= 0n) return;
   const growth = parsePercent(String(formData.get("growth") ?? "0")) ?? 0;
-  const seasonality = 1; // TODO(product): сезонность по месяцам — следующая итерация
+  const seasonality = 1; // при генерации без сезонности; правится по месяцам в таблице плана
 
   // продукт должен принадлежать компании
   const product = await prisma.product.findFirst({
@@ -74,6 +74,40 @@ export async function generateSalesPlanAction(formData: FormData): Promise<void>
       })),
     }),
   ]);
+
+  revalidatePath("/planning/sales");
+  revalidatePath("/planning/compare");
+}
+
+/** Правка строки плана: количество, цена, сезонность (SPEC 6.5 — сезонность по месяцам). */
+export async function updateSalesPlanRowAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!canWrite(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const row = await prisma.salesPlan.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!row) return;
+
+  const quantity = Number.parseFloat(String(formData.get("quantity") ?? "").replace(",", "."));
+  const seasonality = Number.parseFloat(
+    String(formData.get("seasonality") ?? "").replace(",", ".")
+  );
+  const price = parseTenge(String(formData.get("price") ?? "").trim());
+
+  if (!Number.isFinite(quantity) || quantity < 0 || quantity > 1_000_000) return;
+  if (!Number.isFinite(seasonality) || seasonality <= 0 || seasonality > 100) return;
+  if (price === null || price < 0n) return;
+
+  await prisma.salesPlan.update({
+    where: { id: row.id },
+    data: {
+      plannedQuantity: Math.round(quantity * 100) / 100,
+      seasonalityFactor: Math.round(seasonality * 10000) / 10000,
+      plannedPriceMinor: price,
+    },
+  });
 
   revalidatePath("/planning/sales");
   revalidatePath("/planning/compare");

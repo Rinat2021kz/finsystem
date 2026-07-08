@@ -39,10 +39,12 @@ export default async function SharePage({
   const config = await prisma.dashboardConfig.findFirst({
     where: { companyId: link.companyId, name: "default" },
   });
-  const consultantComment =
+  const configJson =
     config && typeof config.configJson === "object" && config.configJson !== null
-      ? String((config.configJson as Record<string, unknown>).consultantComment ?? "")
-      : "";
+      ? (config.configJson as Record<string, unknown>)
+      : {};
+  const consultantComment = String(configJson.consultantComment ?? "");
+  const brandLine = String(configJson.brandLine ?? "");
 
   const netFlow = cf.cashInMinor - cf.cashOutMinor;
 
@@ -51,6 +53,12 @@ export default async function SharePage({
       <h1>{company.name}</h1>
       <p className="page-sub">
         Финансовая сводка за {formatMonthRu(start)} · режим просмотра по ссылке
+        {brandLine && (
+          <>
+            <br />
+            <strong>{brandLine}</strong>
+          </>
+        )}
       </p>
 
       <form method="get" className="toolbar">
@@ -145,7 +153,7 @@ export default async function SharePage({
       </div>
 
       <p className="muted" style={{ marginTop: 24, fontSize: "0.85rem" }}>
-        Сформировано системой «ФинУчёт». Данные доступны только для просмотра.
+        {brandLine ? `${brandLine} · ` : ""}Данные доступны только для просмотра.
       </p>
     </div>
   );
