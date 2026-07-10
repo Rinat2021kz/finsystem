@@ -1,6 +1,11 @@
 import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
-import { createCategoryAction, toggleCategoryAction } from "../actions";
+import {
+  createCategoryAction,
+  deleteCategoryAction,
+  toggleCategoryAction,
+  updateCategoryAction,
+} from "../actions";
 
 const GROUP_LABELS: Record<string, string> = {
   revenue: "Выручка",
@@ -13,8 +18,13 @@ const GROUP_LABELS: Record<string, string> = {
   other: "Прочее",
 };
 
-export default async function CategoriesPage() {
+export default async function CategoriesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const tenant = await requireTenant();
+  const params = await searchParams;
   const categories = await prisma.category.findMany({
     where: { companyId: tenant.companyId },
     orderBy: [{ type: "asc" }, { name: "asc" }],
@@ -31,6 +41,13 @@ export default async function CategoriesPage() {
       <p className="page-sub">
         Статьи доходов и расходов. Группа определяет строку в отчёте о прибылях и убытках.
       </p>
+
+      {params.error === "inuse" && (
+        <div className="alert error">
+          Категорию нельзя удалить: на неё записаны операции, планы или подкатегории. Скройте её —
+          она исчезнет из форм, но останется в истории и отчётах.
+        </div>
+      )}
 
       {admin && (
         <form action={createCategoryAction} className="panel">
@@ -97,31 +114,84 @@ export default async function CategoriesPage() {
                 </tr>
               </thead>
               <tbody>
-                {list.map((c) => (
-                  <tr key={c.id}>
-                    <td>
-                      {c.parent ? <span className="muted">{c.parent.name} / </span> : null}
-                      {c.name}
-                    </td>
-                    <td className="muted">{GROUP_LABELS[c.pnlGroup] ?? c.pnlGroup}</td>
-                    <td className="muted">{c.isCapex ? "капзатраты" : ""}</td>
-                    <td>
-                      <span className={`badge ${c.isActive ? "green" : "gray"}`}>
-                        {c.isActive ? "Активна" : "Скрыта"}
-                      </span>
-                    </td>
-                    {admin && (
+                {list.map((c) => {
+                  const formId = `cat-${c.id}`;
+                  return (
+                    <tr key={c.id}>
                       <td>
-                        <form action={toggleCategoryAction}>
-                          <input type="hidden" name="id" value={c.id} />
-                          <button type="submit" className="secondary">
-                            {c.isActive ? "Скрыть" : "Вернуть"}
-                          </button>
-                        </form>
+                        {c.parent ? <span className="muted">{c.parent.name} / </span> : null}
+                        {admin ? (
+                          <input name="name" form={formId} defaultValue={c.name} style={{ width: 200 }} />
+                        ) : (
+                          c.name
+                        )}
                       </td>
-                    )}
-                  </tr>
-                ))}
+                      <td className="muted">
+                        {admin && c.type === "expense" ? (
+                          <select name="pnlGroup" form={formId} defaultValue={c.pnlGroup}>
+                            {Object.entries(GROUP_LABELS)
+                              .filter(([v]) => v !== "revenue")
+                              .map(([value, label]) => (
+                                <option key={value} value={value}>
+                                  {label}
+                                </option>
+                              ))}
+                          </select>
+                        ) : (
+                          (GROUP_LABELS[c.pnlGroup] ?? c.pnlGroup)
+                        )}
+                      </td>
+                      <td className="muted">
+                        {admin && c.type === "expense" ? (
+                          <label style={{ fontSize: "0.85rem", whiteSpace: "nowrap" }}>
+                            <input
+                              type="checkbox"
+                              name="isCapex"
+                              form={formId}
+                              defaultChecked={c.isCapex}
+                            />{" "}
+                            капзатраты
+                          </label>
+                        ) : c.isCapex ? (
+                          "капзатраты"
+                        ) : (
+                          ""
+                        )}
+                      </td>
+                      <td>
+                        <span className={`badge ${c.isActive ? "green" : "gray"}`}>
+                          {c.isActive ? "Активна" : "Скрыта"}
+                        </span>
+                      </td>
+                      {admin && (
+                        <td style={{ whiteSpace: "nowrap" }}>
+                          <form id={formId} action={updateCategoryAction} style={{ display: "inline" }}>
+                            <input type="hidden" name="id" value={c.id} />
+                            <button type="submit" className="secondary" title="Сохранить изменения">
+                              💾
+                            </button>
+                          </form>{" "}
+                          <form action={toggleCategoryAction} style={{ display: "inline" }}>
+                            <input type="hidden" name="id" value={c.id} />
+                            <button type="submit" className="secondary">
+                              {c.isActive ? "Скрыть" : "Вернуть"}
+                            </button>
+                          </form>{" "}
+                          <form action={deleteCategoryAction} style={{ display: "inline" }}>
+                            <input type="hidden" name="id" value={c.id} />
+                            <button
+                              type="submit"
+                              className="secondary"
+                              title="Удалить (если нет операций и планов)"
+                            >
+                              ✕
+                            </button>
+                          </form>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -1,9 +1,21 @@
 import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
-import { createCounterpartyAction, toggleCounterpartyAction } from "../actions";
+import {
+  createCounterpartyAction,
+  deleteCounterpartyAction,
+  toggleCounterpartyAction,
+  updateCounterpartyAction,
+} from "../actions";
 
-export default async function CounterpartiesPage() {
+const CP_TYPES = ["клиент", "поставщик", "сотрудник", "прочее"];
+
+export default async function CounterpartiesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const tenant = await requireTenant();
+  const params = await searchParams;
   const counterparties = await prisma.counterparty.findMany({
     where: { companyId: tenant.companyId },
     orderBy: { name: "asc" },
@@ -15,6 +27,13 @@ export default async function CounterpartiesPage() {
       <h1>Контрагенты</h1>
       <p className="page-sub">Клиенты, поставщики и сотрудники</p>
 
+      {params.error === "inuse" && (
+        <div className="alert error">
+          Контрагента нельзя удалить: на него уже записаны операции. Скройте его — он исчезнет из
+          форм, но останется в истории.
+        </div>
+      )}
+
       {admin && (
         <form action={createCounterpartyAction} className="panel">
           <div className="form-grid">
@@ -25,10 +44,11 @@ export default async function CounterpartiesPage() {
             <label className="field">
               Тип
               <select name="type" defaultValue="клиент">
-                <option value="клиент">Клиент</option>
-                <option value="поставщик">Поставщик</option>
-                <option value="сотрудник">Сотрудник</option>
-                <option value="прочее">Прочее</option>
+                {CP_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t[0].toUpperCase() + t.slice(1)}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="field">
@@ -59,28 +79,67 @@ export default async function CounterpartiesPage() {
                 </td>
               </tr>
             )}
-            {counterparties.map((c) => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td className="muted">{c.type}</td>
-                <td className="muted">{c.contact}</td>
-                <td>
-                  <span className={`badge ${c.isActive ? "green" : "gray"}`}>
-                    {c.isActive ? "Активен" : "Скрыт"}
-                  </span>
-                </td>
-                {admin && (
+            {counterparties.map((c) => {
+              const formId = `cp-${c.id}`;
+              return (
+                <tr key={c.id}>
                   <td>
-                    <form action={toggleCounterpartyAction}>
-                      <input type="hidden" name="id" value={c.id} />
-                      <button type="submit" className="secondary">
-                        {c.isActive ? "Скрыть" : "Вернуть"}
-                      </button>
-                    </form>
+                    {admin ? (
+                      <input name="name" form={formId} defaultValue={c.name} style={{ width: 180 }} />
+                    ) : (
+                      c.name
+                    )}
                   </td>
-                )}
-              </tr>
-            ))}
+                  <td className="muted">
+                    {admin ? (
+                      <select name="type" form={formId} defaultValue={c.type ?? "прочее"}>
+                        {CP_TYPES.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      c.type
+                    )}
+                  </td>
+                  <td className="muted">
+                    {admin ? (
+                      <input name="contact" form={formId} defaultValue={c.contact ?? ""} style={{ width: 160 }} />
+                    ) : (
+                      c.contact
+                    )}
+                  </td>
+                  <td>
+                    <span className={`badge ${c.isActive ? "green" : "gray"}`}>
+                      {c.isActive ? "Активен" : "Скрыт"}
+                    </span>
+                  </td>
+                  {admin && (
+                    <td style={{ whiteSpace: "nowrap" }}>
+                      <form id={formId} action={updateCounterpartyAction} style={{ display: "inline" }}>
+                        <input type="hidden" name="id" value={c.id} />
+                        <button type="submit" className="secondary" title="Сохранить изменения">
+                          💾
+                        </button>
+                      </form>{" "}
+                      <form action={toggleCounterpartyAction} style={{ display: "inline" }}>
+                        <input type="hidden" name="id" value={c.id} />
+                        <button type="submit" className="secondary">
+                          {c.isActive ? "Скрыть" : "Вернуть"}
+                        </button>
+                      </form>{" "}
+                      <form action={deleteCounterpartyAction} style={{ display: "inline" }}>
+                        <input type="hidden" name="id" value={c.id} />
+                        <button type="submit" className="secondary" title="Удалить (если нет операций)">
+                          ✕
+                        </button>
+                      </form>
+                    </td>
+                  )}
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>

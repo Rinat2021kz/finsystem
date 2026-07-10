@@ -112,8 +112,8 @@ export default async function SalesPlanPage({
               <input name="months" type="number" min={1} max={24} defaultValue={12} />
             </label>
             <label className="field">
-              Цена, ₸
-              <input name="price" required inputMode="numeric" placeholder="10 000" />
+              Цена, ₸ (пусто — базовая цена из справочника)
+              <input name="price" inputMode="numeric" placeholder="из справочника" />
             </label>
             <label className="field">
               Количество в 1-й месяц

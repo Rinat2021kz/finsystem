@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
@@ -161,6 +162,51 @@ export async function toggleProductAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/products");
 }
 
+export async function updateProductAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const product = await prisma.product.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!product) return;
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (name.length === 0) return;
+  const unit = String(formData.get("unit") ?? "").trim();
+  const basePrice = parseTenge(String(formData.get("basePrice") ?? "").trim() || "0");
+  const costPerUnit = parseTenge(String(formData.get("costPerUnit") ?? "").trim() || "0");
+  if (basePrice === null || basePrice < 0n || costPerUnit === null || costPerUnit < 0n) return;
+
+  await prisma.product.update({
+    where: { id: product.id },
+    data: { name, unit: unit || null, basePriceMinor: basePrice, costPerUnitMinor: costPerUnit },
+  });
+  revalidatePath("/settings/products");
+}
+
+/** Удаление продукта — только если он не используется в планах; иначе скрывать. */
+export async function deleteProductAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const product = await prisma.product.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!product) return;
+
+  const [inSales, inExpenses] = await Promise.all([
+    prisma.salesPlan.count({ where: { productId: id } }),
+    prisma.expensePlan.count({ where: { productId: id } }),
+  ]);
+  if (inSales + inExpenses > 0) redirect("/settings/products?error=inuse");
+
+  await prisma.product.delete({ where: { id: product.id } });
+  revalidatePath("/settings/products");
+}
+
 const counterpartySchema = z.object({
   name: z.string().trim().min(1),
   type: z.string().trim().optional(),
@@ -194,4 +240,116 @@ export async function toggleCounterpartyAction(formData: FormData): Promise<void
   if (!cp) return;
   await prisma.counterparty.update({ where: { id }, data: { isActive: !cp.isActive } });
   revalidatePath("/settings/counterparties");
+}
+
+export async function updateCounterpartyAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const cp = await prisma.counterparty.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!cp) return;
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (name.length === 0) return;
+  const type = String(formData.get("type") ?? "").trim();
+  const contact = String(formData.get("contact") ?? "").trim();
+
+  await prisma.counterparty.update({
+    where: { id: cp.id },
+    data: { name, type: type || null, contact: contact || null },
+  });
+  revalidatePath("/settings/counterparties");
+}
+
+/** Удаление контрагента — только без привязанных операций; иначе скрывать. */
+export async function deleteCounterpartyAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const cp = await prisma.counterparty.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!cp) return;
+
+  const used = await prisma.transaction.count({ where: { counterpartyId: id } });
+  if (used > 0) redirect("/settings/counterparties?error=inuse");
+
+  await prisma.counterparty.delete({ where: { id: cp.id } });
+  revalidatePath("/settings/counterparties");
+}
+
+export async function updateCategoryAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const category = await prisma.category.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!category) return;
+
+  const name = String(formData.get("name") ?? "").trim();
+  if (name.length === 0) return;
+  const groupRaw = String(formData.get("pnlGroup") ?? "");
+  const groups = ["variable", "fixed", "payroll", "tax", "interest", "depreciation", "other"];
+  const pnlGroup =
+    category.type === "income"
+      ? "revenue"
+      : groups.includes(groupRaw)
+        ? (groupRaw as (typeof groups)[number])
+        : category.pnlGroup;
+
+  const before = { name: category.name, pnlGroup: category.pnlGroup };
+  await prisma.category.update({
+    where: { id: category.id },
+    data: {
+      name,
+      pnlGroup: pnlGroup as typeof category.pnlGroup,
+      isCapex: formData.get("isCapex") === "on",
+    },
+  });
+  await logAudit({
+    companyId: tenant.companyId,
+    userId: tenant.userId,
+    entity: "category",
+    entityId: category.id,
+    action: "update",
+    before,
+    after: { name, pnlGroup },
+  });
+  revalidatePath("/settings/categories");
+}
+
+/** Удаление категории — только без операций, планов и подкатегорий; иначе скрывать. */
+export async function deleteCategoryAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const category = await prisma.category.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!category) return;
+
+  const [inTxns, inPlans, children] = await Promise.all([
+    prisma.transaction.count({ where: { categoryId: id } }),
+    prisma.expensePlan.count({ where: { categoryId: id } }),
+    prisma.category.count({ where: { parentId: id } }),
+  ]);
+  if (inTxns + inPlans + children > 0) redirect("/settings/categories?error=inuse");
+
+  await prisma.category.delete({ where: { id: category.id } });
+  await logAudit({
+    companyId: tenant.companyId,
+    userId: tenant.userId,
+    entity: "category",
+    entityId: id,
+    action: "delete",
+    before: category,
+  });
+  revalidatePath("/settings/categories");
 }

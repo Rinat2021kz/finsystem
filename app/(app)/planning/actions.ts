@@ -39,8 +39,6 @@ export async function generateSalesPlanAction(formData: FormData): Promise<void>
   if (!parsed.success) return;
   const d = parsed.data;
 
-  const price = parseTenge(String(formData.get("price") ?? "").trim());
-  if (price === null || price <= 0n) return;
   const growth = parsePercent(String(formData.get("growth") ?? "0")) ?? 0;
   const seasonality = 1; // при генерации без сезонности; правится по месяцам в таблице плана
 
@@ -49,6 +47,11 @@ export async function generateSalesPlanAction(formData: FormData): Promise<void>
     where: { id: d.productId, companyId: tenant.companyId },
   });
   if (!product) return;
+
+  // цена из формы; пустое поле = базовая цена из справочника продуктов
+  const priceRaw = String(formData.get("price") ?? "").trim();
+  const price = priceRaw === "" ? product.basePriceMinor : parseTenge(priceRaw);
+  if (price === null || price <= 0n) return;
 
   const quantities = projectQuantities(d.baseQuantity, growth, d.months, d.wholeUnits);
   const months = quantities.map((_q, i) => new Date(Date.UTC(d.startYear, d.startMonth - 1 + i, 1)));
