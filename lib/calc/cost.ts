@@ -29,6 +29,21 @@ export function componentCostMinor(
   return (component.unitCostMinor * qtyThousandths) / 1_000n;
 }
 
+/** Себестоимость проданного объёма: цена единицы × количество (до 2 знаков). */
+export function soldGoodsCostMinor(unitCostMinor: bigint, quantity: number): bigint {
+  if (unitCostMinor <= 0n || !Number.isFinite(quantity) || quantity <= 0) return 0n;
+  const qtyHundredths = BigInt(Math.round(quantity * 100));
+  return (unitCostMinor * qtyHundredths) / 100n;
+}
+
+/** Средняя фактическая цена единицы: выручка / количество; при нуле — null («нет данных»). */
+export function averageUnitPriceMinor(revenueMinor: bigint, quantity: number): bigint | null {
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
+  const qtyHundredths = BigInt(Math.round(quantity * 100));
+  if (qtyHundredths <= 0n) return null;
+  return (revenueMinor * 100n) / qtyHundredths;
+}
+
 /** Итоговая себестоимость единицы: сумма компонентов. */
 export function unitCostFromComponents(
   components: ComponentCalc[],

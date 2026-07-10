@@ -21,6 +21,8 @@ const baseSchema = z.object({
   accountToId: z.string().uuid().optional(),
   counterpartyId: z.string().uuid().optional(),
   projectId: z.string().uuid().optional(),
+  productId: z.string().uuid().optional(),
+  quantity: z.coerce.number().positive().max(99_999_999).optional(),
   comment: z.string().trim().max(500).optional(),
 });
 
@@ -52,6 +54,8 @@ export async function createTransactionAction(
     accountToId: formData.get("accountToId") || undefined,
     counterpartyId: formData.get("counterpartyId") || undefined,
     projectId: formData.get("projectId") || undefined,
+    productId: formData.get("productId") || undefined,
+    quantity: String(formData.get("quantity") ?? "").replace(",", ".").trim() || undefined,
     comment: formData.get("comment") || undefined,
   });
   if (!parsed.success) {
@@ -96,6 +100,13 @@ export async function createTransactionAction(
     });
     if (!project) return { error: "Проект не найден" };
   }
+  // продукт и количество — только для дохода (факт-проверка себестоимости)
+  if (d.type === "income" && d.productId) {
+    const product = await prisma.product.findFirst({
+      where: { id: d.productId, companyId: tenant.companyId },
+    });
+    if (!product) return { error: "Продукт не найден" };
+  }
 
   // закрытый месяц неизменяем (правило 5)
   const closedError = await assertMonthsOpen(tenant.companyId, [d.dateCashflow, periodPnl]);
@@ -114,6 +125,9 @@ export async function createTransactionAction(
       accountToId: d.type === "expense" ? null : (d.accountToId ?? null),
       counterpartyId: d.counterpartyId ?? null,
       projectId: d.type === "transfer" ? null : (d.projectId ?? null),
+      productId: d.type === "income" ? (d.productId ?? null) : null,
+      // если продукт выбран, а количество не заполнено — считаем 1
+      quantity: d.type === "income" && d.productId ? (d.quantity ?? 1) : null,
       comment: d.comment ?? null,
       createdBy: tenant.userId,
     },

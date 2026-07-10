@@ -19,12 +19,14 @@ export function TransactionForm({
   categories,
   counterparties,
   projects = [],
+  products = [],
 }: {
   type: "income" | "expense" | "transfer";
   accounts: Option[];
   categories: Option[];
   counterparties: Option[];
   projects?: Option[];
+  products?: Option[];
 }) {
   const [state, action, pending] = useActionState<TxnFormState, FormData>(
     createTransactionAction,
@@ -117,6 +119,25 @@ export function TransactionForm({
                 </select>
               </label>
             )}
+            {type === "income" && products.length > 0 && (
+              <>
+                <label className="field">
+                  Продукт (необязательно)
+                  <select name="productId" defaultValue="">
+                    <option value="">—</option>
+                    {products.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  Количество
+                  <input name="quantity" inputMode="decimal" placeholder="Напр. 5" />
+                </label>
+              </>
+            )}
             {counterparties.length > 0 && (
               <label className="field">
                 Контрагент
@@ -148,6 +169,12 @@ export function TransactionForm({
                 : "Перевести"}
         </button>
       </div>
+      {type === "income" && products.length > 0 && (
+        <p className="muted" style={{ margin: "10px 0 0", fontSize: "0.85rem" }}>
+          Если укажете продукт и количество, система посчитает фактическую среднюю цену и сравнит
+          её с себестоимостью по рецептуре — на странице продукта в справочнике.
+        </p>
+      )}
       {type === "transfer" && (
         <p className="muted" style={{ margin: "10px 0 0", fontSize: "0.85rem" }}>
           Перевод меняет только остатки счетов — он не попадает в доходы, расходы и ОПУ.

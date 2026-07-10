@@ -3,7 +3,13 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
 import { formatMoney, formatPercent, safeRatio } from "@/lib/money";
-import { componentCostMinor, unitCostFromComponents } from "@/lib/calc/cost";
+import { monthStart, monthEnd, toISODate, formatDateRu } from "@/lib/period";
+import {
+  averageUnitPriceMinor,
+  componentCostMinor,
+  soldGoodsCostMinor,
+  unitCostFromComponents,
+} from "@/lib/calc/cost";
 import {
   addComponentAction,
   applyComputedCostAction,
@@ -12,11 +18,14 @@ import {
 
 export default async function ProductCostPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string; to?: string }>;
 }) {
   const tenant = await requireTenant();
   const { id } = await params;
+  const sp = await searchParams;
 
   // мультитенантность: продукт только своей компании
   const product = await prisma.product.findFirst({
@@ -37,6 +46,32 @@ export default async function ProductCostPage({
   const marginRatio = product.basePriceMinor > 0n ? safeRatio(margin, product.basePriceMinor) : null;
   const hasPercentRows = product.components.some((c) => c.kind === "percent_of_price");
   const differsFromCard = total !== product.costPerUnitMinor;
+
+  // Факт за период: продажи по операциям дохода с этим продуктом.
+  // Период по умолчанию — текущий месяц (это выбор в UI, расчёт идёт строго по границам).
+  const now = new Date();
+  const defaultFrom = monthStart(now.getUTCFullYear(), now.getUTCMonth() + 1);
+  const defaultTo = monthEnd(now.getUTCFullYear(), now.getUTCMonth() + 1);
+  const from = sp.from ? new Date(sp.from) : defaultFrom;
+  const to = sp.to ? new Date(sp.to) : defaultTo;
+  const fact = await prisma.transaction.aggregate({
+    where: {
+      companyId: tenant.companyId, // мультитенантность
+      productId: product.id,
+      type: "income",
+      dateCashflow: { gte: from, lte: to },
+    },
+    _sum: { amountMinor: true, quantity: true },
+    _count: true,
+  });
+  const soldQty = Number(fact._sum.quantity ?? 0);
+  const revenueMinor = fact._sum.amountMinor ?? 0n;
+  // для факт-оценки берём себестоимость по составу, если рецептура заполнена, иначе — из карточки
+  const effectiveUnitCost = product.components.length > 0 ? total : product.costPerUnitMinor;
+  const soldCost = soldGoodsCostMinor(effectiveUnitCost, soldQty);
+  const avgPrice = averageUnitPriceMinor(revenueMinor, soldQty);
+  const grossMargin = revenueMinor - soldCost;
+  const grossMarginRatio = revenueMinor > 0n ? safeRatio(grossMargin, revenueMinor) : null;
 
   return (
     <>
@@ -177,6 +212,78 @@ export default async function ProductCostPage({
         <div className="alert success">
           Себестоимость в карточке продукта совпадает с расчётом по составу.
         </div>
+      )}
+
+      <h2 style={{ marginTop: 28 }}>Факт за период</h2>
+      <p className="page-sub">
+        Считается по операциям дохода, где выбран этот продукт и указано количество. Добавляйте их
+        на странице <Link href="/transactions?add=income">Операции → Доход</Link>.
+      </p>
+
+      <form method="get" action={`/settings/products/${product.id}`} className="toolbar">
+        <label className="field">
+          С даты
+          <input type="date" name="from" defaultValue={toISODate(from)} />
+        </label>
+        <label className="field">
+          По дату
+          <input type="date" name="to" defaultValue={toISODate(to)} />
+        </label>
+        <button type="submit" className="secondary">
+          Показать
+        </button>
+      </form>
+
+      {fact._count === 0 ? (
+        <div className="alert info">
+          За период {formatDateRu(from)} — {formatDateRu(to)} продаж этого продукта не отмечено —
+          нет данных для сравнения.
+        </div>
+      ) : (
+        <>
+          <div className="cards">
+            <div className="card">
+              <div className="label">Продано</div>
+              <div className="value">
+                {soldQty.toLocaleString("ru-RU")}
+                {product.unit ? ` ${product.unit}` : ""}
+              </div>
+              <div className="hint">Операций дохода: {fact._count}</div>
+            </div>
+            <div className="card">
+              <div className="label">Выручка</div>
+              <div className="value">{formatMoney(revenueMinor)}</div>
+              <div className="hint">
+                Средняя цена: {avgPrice === null ? "нет данных" : formatMoney(avgPrice)}
+                {avgPrice !== null && product.basePriceMinor > 0n && avgPrice < product.basePriceMinor
+                  ? ` — ниже цены в карточке (${formatMoney(product.basePriceMinor)})`
+                  : ""}
+              </div>
+            </div>
+            <div className="card">
+              <div className="label">Себестоимость проданного</div>
+              <div className="value">{formatMoney(soldCost)}</div>
+              <div className="hint">
+                {product.components.length > 0
+                  ? `По составу: ${formatMoney(effectiveUnitCost)} за единицу`
+                  : `Из карточки продукта: ${formatMoney(effectiveUnitCost)} за единицу`}
+              </div>
+            </div>
+            <div className="card">
+              <div className="label">Валовая маржа</div>
+              <div className={`value ${grossMargin < 0n ? "expense" : ""}`}>
+                {formatMoney(grossMargin)}
+              </div>
+              <div className="hint">Доля в выручке: {formatPercent(grossMarginRatio)}</div>
+            </div>
+          </div>
+          {grossMargin < 0n && (
+            <div className="alert error">
+              Выручка за период не покрывает расчётную себестоимость — проверьте цену продажи или
+              состав рецептуры.
+            </div>
+          )}
+        </>
       )}
     </>
   );

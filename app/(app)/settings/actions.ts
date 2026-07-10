@@ -186,7 +186,7 @@ export async function updateProductAction(formData: FormData): Promise<void> {
   revalidatePath("/settings/products");
 }
 
-/** Удаление продукта — только если он не используется в планах; иначе скрывать. */
+/** Удаление продукта — только если он не используется в планах и операциях; иначе скрывать. */
 export async function deleteProductAction(formData: FormData): Promise<void> {
   const tenant = await requireTenant();
   if (!isAdmin(tenant.role)) return;
@@ -197,11 +197,12 @@ export async function deleteProductAction(formData: FormData): Promise<void> {
   });
   if (!product) return;
 
-  const [inSales, inExpenses] = await Promise.all([
+  const [inSales, inExpenses, inTxns] = await Promise.all([
     prisma.salesPlan.count({ where: { productId: id } }),
     prisma.expensePlan.count({ where: { productId: id } }),
+    prisma.transaction.count({ where: { productId: id } }),
   ]);
-  if (inSales + inExpenses > 0) redirect("/settings/products?error=inuse");
+  if (inSales + inExpenses + inTxns > 0) redirect("/settings/products?error=inuse");
 
   await prisma.product.delete({ where: { id: product.id } });
   revalidatePath("/settings/products");

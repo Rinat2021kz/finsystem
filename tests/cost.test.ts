@@ -1,6 +1,11 @@
 // Тесты рецептуры (расчёт себестоимости по составу).
 import { describe, expect, it } from "vitest";
-import { componentCostMinor, unitCostFromComponents } from "@/lib/calc/cost";
+import {
+  averageUnitPriceMinor,
+  componentCostMinor,
+  soldGoodsCostMinor,
+  unitCostFromComponents,
+} from "@/lib/calc/cost";
 
 describe("Компонент per_unit", () => {
   it("зерно: 0.018 кг × 9 000 ₸/кг = 162 ₸", () => {
@@ -60,5 +65,24 @@ describe("Итог по составу", () => {
   });
   it("пустой состав → 0", () => {
     expect(unitCostFromComponents([], 150_000n)).toBe(0n);
+  });
+});
+
+describe("Факт-проверка себестоимости", () => {
+  it("себестоимость проданного: 350 ₸ × 120 шт = 42 000 ₸", () => {
+    expect(soldGoodsCostMinor(35_000n, 120)).toBe(4_200_000n);
+  });
+  it("дробное количество: 350 ₸ × 2.5 = 875 ₸", () => {
+    expect(soldGoodsCostMinor(35_000n, 2.5)).toBe(87_500n);
+  });
+  it("нулевое количество или себестоимость → 0", () => {
+    expect(soldGoodsCostMinor(35_000n, 0)).toBe(0n);
+    expect(soldGoodsCostMinor(0n, 10)).toBe(0n);
+  });
+  it("средняя цена: 180 000 ₸ выручки / 120 шт = 1 500 ₸", () => {
+    expect(averageUnitPriceMinor(18_000_000n, 120)).toBe(150_000n);
+  });
+  it("ноль продаж → null, не ошибка деления", () => {
+    expect(averageUnitPriceMinor(18_000_000n, 0)).toBeNull();
   });
 });

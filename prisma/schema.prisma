@@ -232,8 +232,9 @@ model Product {
   costPerUnitMinor BigInt  @default(0) @map("cost_per_unit_minor")
   isActive         Boolean @default(true) @map("is_active")
 
-  company    Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  components ProductComponent[]
+  company      Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  components   ProductComponent[]
+  transactions Transaction[]
 
   @@index([companyId])
   @@map("products")
@@ -295,6 +296,8 @@ model Transaction {
   accountToId       String?  @map("account_to_id") @db.Uuid
   projectId         String?  @map("project_id") @db.Uuid
   counterpartyId    String?  @map("counterparty_id") @db.Uuid
+  productId         String?  @map("product_id") @db.Uuid
+  quantity          Decimal? @db.Decimal(14, 2)
   comment           String?
   attachmentUrl     String?  @map("attachment_url")
   includeInPnl      Boolean  @default(true) @map("include_in_pnl")
@@ -309,10 +312,12 @@ model Transaction {
   accountTo    Account?      @relation("TxnAccountTo", fields: [accountToId], references: [id])
   project      Project?      @relation(fields: [projectId], references: [id])
   counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
+  product      Product?      @relation(fields: [productId], references: [id])
 
   @@index([companyId, dateCashflow])
   @@index([companyId, periodPnl])
   @@index([projectId])
+  @@index([productId])
   @@map("transactions")
 }
 

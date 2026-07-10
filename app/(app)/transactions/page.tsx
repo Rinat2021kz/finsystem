@@ -25,7 +25,7 @@ export default async function TransactionsPage({
   const params = await searchParams;
   const addType = (["income", "expense", "transfer"] as const).find((t) => t === params.add);
 
-  const [accounts, categories, counterparties, company, projects] = await Promise.all([
+  const [accounts, categories, counterparties, company, projects, products] = await Promise.all([
     prisma.account.findMany({
       where: { companyId: tenant.companyId, isActive: true },
       orderBy: { createdAt: "asc" },
@@ -46,6 +46,10 @@ export default async function TransactionsPage({
       },
       orderBy: { createdAt: "desc" },
     }),
+    prisma.product.findMany({
+      where: { companyId: tenant.companyId, isActive: true },
+      orderBy: { name: "asc" },
+    }),
   ]);
 
   // фильтры таблицы
@@ -64,7 +68,7 @@ export default async function TransactionsPage({
   };
   const txns = await prisma.transaction.findMany({
     ...where,
-    include: { category: true, accountFrom: true, accountTo: true, counterparty: true },
+    include: { category: true, accountFrom: true, accountTo: true, counterparty: true, product: true },
     orderBy: [{ dateCashflow: "desc" }, { createdAt: "desc" }],
     take: 200,
   });
@@ -111,6 +115,10 @@ export default async function TransactionsPage({
                 }))
               : []
           }
+          products={products.map((p) => ({
+            id: p.id,
+            name: p.unit ? `${p.name} (${p.unit})` : p.name,
+          }))}
         />
       )}
 
@@ -193,7 +201,15 @@ export default async function TransactionsPage({
                   {formatMoney(t.amountMinor)}
                 </td>
                 <td className="muted">{t.periodPnl ? formatMonthRu(t.periodPnl) : "не в ОПУ"}</td>
-                <td className="muted">{t.comment}</td>
+                <td className="muted">
+                  {t.product && (
+                    <>
+                      {t.product.name} × {Number(t.quantity ?? 1).toLocaleString("ru-RU")}
+                      {t.comment ? " · " : ""}
+                    </>
+                  )}
+                  {t.comment}
+                </td>
                 {writable && (
                   <td>
                     <form action={deleteTransactionAction}>
