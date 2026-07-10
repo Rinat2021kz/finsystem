@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
 import { formatMoney, formatPercent, safeRatio } from "@/lib/money";
@@ -142,6 +143,10 @@ export default async function ProductsPage({
                   <td className={`num ${margin < 0n ? "expense" : ""}`}>
                     {formatMoney(margin)}
                     <span className="muted"> · {formatPercent(marginRatio)}</span>
+                    <br />
+                    <Link href={`/settings/products/${p.id}`} style={{ fontSize: "0.8rem" }}>
+                      состав →
+                    </Link>
                   </td>
                   <td>
                     <span className={`badge ${p.isActive ? "green" : "gray"}`}>

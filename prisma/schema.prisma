@@ -232,10 +232,32 @@ model Product {
   costPerUnitMinor BigInt  @default(0) @map("cost_per_unit_minor")
   isActive         Boolean @default(true) @map("is_active")
 
-  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  company    Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  components ProductComponent[]
 
   @@index([companyId])
   @@map("products")
+}
+
+// Рецептура: из чего складывается переменная себестоимость единицы продукта.
+// kind='per_unit' — количество × цена за единицу измерения (зерно 0.018 кг × 9 000 ₸/кг);
+// kind='percent_of_price' — процент от базовой цены продажи (комиссия Kaspi, сдельная).
+model ProductComponent {
+  id            String   @id @default(uuid()) @db.Uuid
+  companyId     String   @map("company_id") @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  name          String
+  kind          String   @default("per_unit")
+  quantity      Decimal  @default(1) @db.Decimal(14, 3)
+  unit          String?
+  unitCostMinor BigInt   @default(0) @map("unit_cost_minor")
+  percent       Decimal? @db.Decimal(9, 4)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("product_components")
 }
 
 model Project {
