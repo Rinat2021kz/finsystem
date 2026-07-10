@@ -2,10 +2,13 @@
 
 import { hash } from "bcryptjs";
 import { AuthError } from "next-auth";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { signIn } from "@/lib/auth";
+import { COMPANY_COOKIE } from "@/lib/tenancy";
+import { DEMO_EMAIL, DEMO_PASSWORD, ensureDemoCompany } from "@/lib/demo";
 
 const registerSchema = z.object({
   name: z.string().trim().min(2, "Укажите имя"),
@@ -51,6 +54,15 @@ export async function registerAction(
 
   await signIn("credentials", { email, password, redirect: false });
   redirect("/onboarding");
+}
+
+/** Вход в демо-режим: при первом запуске создаёт демо-компанию с данными. */
+export async function demoLoginAction(): Promise<void> {
+  const companyId = await ensureDemoCompany();
+  await signIn("credentials", { email: DEMO_EMAIL, password: DEMO_PASSWORD, redirect: false });
+  const cookieStore = await cookies();
+  cookieStore.set(COMPANY_COOKIE, companyId, { httpOnly: true, sameSite: "lax", path: "/" });
+  redirect("/dashboard");
 }
 
 export async function loginAction(

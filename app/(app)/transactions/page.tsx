@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { requireTenant, canWrite } from "@/lib/tenancy";
 import { formatMoney } from "@/lib/money";
 import { formatDateRu, formatMonthRu } from "@/lib/period";
+import { HelpNote } from "@/components/HelpNote";
 import { TransactionForm } from "./form";
 import { deleteTransactionAction } from "./actions";
 
@@ -79,6 +80,16 @@ export default async function TransactionsPage({
     <>
       <h1>Операции</h1>
       <p className="page-sub">Доходы, расходы и переводы между счетами</p>
+
+      <HelpNote title="Как вести операции">
+        <strong>Доход</strong> — деньги пришли, <strong>расход</strong> — ушли,{" "}
+        <strong>перевод</strong> — деньги между своими счетами (не доход и не расход, на прибыль
+        не влияет). «Дата оплаты» определяет месяц в отчёте о движении денег (ДДС). «Месяц учёта
+        в ОПУ» — к какому месяцу операция относится экономически: аренду за январь, оплаченную в
+        декабре, ставьте с датой оплаты в декабре и месяцем учёта «январь». В доходе можно указать
+        продукт и количество — тогда на странице продукта система сверит фактическую выручку с
+        себестоимостью по рецептуре.
+      </HelpNote>
 
       {params.added && <div className="alert success">Операция добавлена</div>}
       {params.error === "closed" && (

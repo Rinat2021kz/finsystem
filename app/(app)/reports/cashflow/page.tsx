@@ -5,6 +5,7 @@ import { formatMoney } from "@/lib/money";
 import { formatMonthRu, monthEnd, monthStart } from "@/lib/period";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { PrintButton } from "@/components/PrintButton";
+import { HelpNote } from "@/components/HelpNote";
 
 export default async function CashflowPage({
   searchParams,
@@ -28,6 +29,13 @@ export default async function CashflowPage({
       <h1>ДДС — движение денег</h1>
       <p className="page-sub">Как двигались деньги за {formatMonthRu(start)}</p>
       <PeriodPicker year={year} month={month} action="/reports/cashflow" />
+      <HelpNote>
+        ДДС отвечает на вопрос <strong>«где деньги?»</strong>: сколько пришло и ушло по дате
+        оплаты. Это не прибыль — предоплата от клиента попадёт сюда сразу, даже если работу вы
+        сделаете в следующем месяце (прибыль смотрите в отчёте ОПУ). Переводы между своими
+        счетами — не доход и не расход: на общий остаток они не влияют, но в таблице по каждому
+        счёту видны отдельной строкой.
+      </HelpNote>
       <div className="toolbar no-print">
         <a className="btn secondary" href={`/api/export/cashflow?year=${year}&month=${month}`}>
           Скачать Excel

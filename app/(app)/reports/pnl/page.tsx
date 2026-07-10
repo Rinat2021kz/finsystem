@@ -6,6 +6,7 @@ import { formatMoney, formatPercent } from "@/lib/money";
 import { formatMonthRu, monthStart } from "@/lib/period";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { PrintButton } from "@/components/PrintButton";
+import { HelpNote } from "@/components/HelpNote";
 import { closeMonthAction, reopenMonthAction } from "../actions";
 
 export default async function PnlPage({
@@ -47,6 +48,13 @@ export default async function PnlPage({
         Экономический результат за {formatMonthRu(period)} (по месяцу учёта, не по дате оплаты)
       </p>
       <PeriodPicker year={year} month={month} action="/reports/pnl" />
+      <HelpNote>
+        ОПУ отвечает на вопрос <strong>«заработали ли мы?»</strong>. Операции попадают сюда по
+        «месяцу учёта», а не по дате оплаты: аренда за январь, оплаченная в декабре, уменьшит
+        прибыль января — хотя деньги ушли в декабре (в декабрьском ДДС). Переводы между счетами
+        сюда не попадают вовсе. «Закрыть месяц» фиксирует цифры: после закрытия операции месяца
+        нельзя менять, отчёт сохраняется снимком.
+      </HelpNote>
       <div className="toolbar no-print">
         <a className="btn secondary" href={`/api/export/pnl?year=${year}&month=${month}`}>
           Скачать Excel

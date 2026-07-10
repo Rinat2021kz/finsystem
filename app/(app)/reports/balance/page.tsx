@@ -5,6 +5,7 @@ import { formatMoney, formatPercent } from "@/lib/money";
 import { formatMonthRu, monthEnd, monthStart } from "@/lib/period";
 import { PeriodPicker } from "@/components/PeriodPicker";
 import { PrintButton } from "@/components/PrintButton";
+import { HelpNote } from "@/components/HelpNote";
 
 export default async function BalancePage({
   searchParams,
@@ -24,6 +25,12 @@ export default async function BalancePage({
       <h1>Баланс денег</h1>
       <p className="page-sub">Остатки по счетам за {formatMonthRu(start)}</p>
       <PeriodPicker year={year} month={month} action="/reports/balance" />
+      <HelpNote>
+        Сколько денег лежит на каждом счёте на начало и конец периода: стартовый остаток счёта
+        плюс все поступления, минус выплаты, с учётом переводов. Если остаток в системе не
+        совпадает с реальным банком — скорее всего, какая-то операция не внесена или внесена
+        дважды: сверьте список операций за период по этому счёту.
+      </HelpNote>
       <div className="toolbar no-print">
         <a className="btn secondary" href={`/api/export/balance?year=${year}&month=${month}`}>
           Скачать Excel

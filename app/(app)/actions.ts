@@ -5,6 +5,18 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import { COMPANY_COOKIE, requireTenant, isAdmin } from "@/lib/tenancy";
+import { isDemoCompany, resetDemoCompany } from "@/lib/demo";
+
+/** Сброс демо-данных к исходным. Работает только внутри демо-компании. */
+export async function resetDemoAction(): Promise<void> {
+  const tenant = await requireTenant();
+  if (!(await isDemoCompany(tenant.companyId))) return;
+
+  const companyId = await resetDemoCompany();
+  const cookieStore = await cookies();
+  cookieStore.set(COMPANY_COOKIE, companyId, { httpOnly: true, sameSite: "lax", path: "/" });
+  redirect("/dashboard?reset=1");
+}
 
 /** Переключение активной компании (кабинет консультанта: несколько клиентов). */
 export async function switchCompanyAction(formData: FormData): Promise<void> {

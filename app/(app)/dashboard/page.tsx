@@ -1,5 +1,9 @@
 import { requireTenant, isAdmin } from "@/lib/tenancy";
-import { saveDashboardCommentAction } from "../actions";
+import { isDemoCompany } from "@/lib/demo";
+import { resetDemoAction, saveDashboardCommentAction } from "../actions";
+
+// сброс демо-данных пересоздаёт компанию целиком — даём серверу время
+export const maxDuration = 60;
 import { loadCalcData, periodFromSearchParams } from "@/lib/reports";
 import { cashflowSummary } from "@/lib/calc/cashflow";
 import { pnlForMonth } from "@/lib/calc/pnl";
@@ -13,10 +17,12 @@ import { TrafficDot, trafficByRatio, trafficBySign } from "@/components/Traffic"
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; month?: string }>;
+  searchParams: Promise<{ year?: string; month?: string; reset?: string }>;
 }) {
   const tenant = await requireTenant();
-  const { year, month } = periodFromSearchParams(await searchParams);
+  const params = await searchParams;
+  const { year, month } = periodFromSearchParams(params);
+  const demo = await isDemoCompany(tenant.companyId);
   const start = monthStart(year, month);
   const end = monthEnd(year, month);
 
@@ -67,6 +73,21 @@ export default async function DashboardPage({
       <h1>Дашборд</h1>
       <p className="page-sub">Ключевые показатели за {formatMonthRu(start)}</p>
       <PeriodPicker year={year} month={month} action="/dashboard" />
+
+      {params.reset && <div className="alert success">Демо-данные сброшены к исходным.</div>}
+      {demo && (
+        <div className="alert info no-print">
+          <strong>Это демо-компания.</strong> Кофейня с примерами за 2025 — июнь 2026: операции,
+          проекты-кейтеринги, рецептура продуктов, планы с сезонностью, инвестсценарий «вторая
+          точка». Январь и февраль 2025 закрыты — попробуйте изменить операцию там. Меняйте что
+          угодно — данные всегда можно вернуть.
+          <form action={resetDemoAction} style={{ marginTop: 8 }}>
+            <button type="submit" className="secondary">
+              Сбросить демо-данные к исходным
+            </button>
+          </form>
+        </div>
+      )}
 
       {consultantComment && (
         <div className="alert info">
