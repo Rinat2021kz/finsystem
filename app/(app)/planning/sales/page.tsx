@@ -33,7 +33,8 @@ export default async function SalesPlanPage({
 
   const [products, rows] = await Promise.all([
     prisma.product.findMany({
-      where: { companyId: tenant.companyId, isActive: true },
+      // материалы не продаются — планировать по ним продажи нельзя
+      where: { companyId: tenant.companyId, isActive: true, isSellable: true },
       orderBy: { name: "asc" },
     }),
     prisma.salesPlan.findMany({

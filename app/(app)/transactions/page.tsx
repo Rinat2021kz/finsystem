@@ -138,10 +138,10 @@ export default async function TransactionsPage({
                 }))
               : []
           }
-          products={products.map((p) => ({
-            id: p.id,
-            name: p.unit ? `${p.name} (${p.unit})` : p.name,
-          }))}
+          products={products
+            // материалы клиенту не продаются — в доходе их выбирать незачем
+            .filter((p) => p.isSellable)
+            .map((p) => ({ id: p.id, name: p.unit ? `${p.name} (${p.unit})` : p.name }))}
           warehouses={
             company?.stockEnabled ? warehouses.map((w) => ({ id: w.id, name: w.name })) : []
           }

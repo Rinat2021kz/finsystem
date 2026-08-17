@@ -166,6 +166,7 @@ async function seedDemoCompany(): Promise<string> {
       accountingStartDate: d(2025, 1, 1),
       projectsEnabled: true,
       investmentsEnabled: true,
+      stockEnabled: true,
     },
   });
   const companyId = company.id;
@@ -323,6 +324,137 @@ async function seedDemoCompany(): Promise<string> {
       orderDate: d(2026, 6, 20), plannedCostMinor: t(220_000),
     },
   });
+
+  // --- склад: две точки, кухня-склад, материалы с дорожающими партиями ---
+  // Показывает главное отличие склада от «расхода при оплате»: зерно куплено впрок
+  // в марте, а в себестоимость попадает по мере расходования в апреле-июне.
+  const warehouseRows = [
+    { name: "Точка на Абая", kind: "point" },
+    { name: "Точка в Мега", kind: "point" },
+    { name: "Кухня-склад", kind: "warehouse" },
+  ];
+  await prisma.warehouse.createMany({
+    data: warehouseRows.map((w) => ({ companyId, name: w.name, kind: w.kind })),
+  });
+  const warehouses = await prisma.warehouse.findMany({ where: { companyId } });
+  const wh = (name: string) => warehouses.find((w) => w.name === name)!.id;
+
+  const MATERIALS = [
+    { name: "Зерно эспрессо", unit: "кг", group: "Сырьё" },
+    { name: "Молоко", unit: "л", group: "Сырьё" },
+    { name: "Стаканы 300 мл", unit: "шт", group: "Расходники" },
+    { name: "Сироп карамель", unit: "л", group: "Сырьё" },
+  ];
+  const materialIds = new Map<string, string>();
+  for (const m of MATERIALS) {
+    const product = await prisma.product.create({
+      data: {
+        companyId,
+        name: m.name,
+        unit: m.unit,
+        productGroup: m.group,
+        // материал не продаётся клиенту, а расходуется
+        isSellable: false,
+        tracksStock: true,
+      },
+    });
+    materialIds.set(m.name, product.id);
+  }
+
+  type MoveRow = {
+    companyId: string;
+    date: Date;
+    type: "receipt" | "issue" | "transfer" | "writeoff";
+    productId: string;
+    warehouseFromId?: string | null;
+    warehouseToId?: string | null;
+    quantity: number;
+    unitCostMinor?: bigint | null;
+    projectId?: string | null;
+    comment?: string | null;
+    createdBy: string;
+  };
+  const moves: MoveRow[] = [];
+  const receipt = (
+    material: string, date: Date, quantity: number, priceTenge: number, comment: string
+  ) =>
+    moves.push({
+      companyId, date, type: "receipt", productId: materialIds.get(material)!,
+      warehouseToId: wh("Кухня-склад"), quantity, unitCostMinor: t(priceTenge),
+      comment, createdBy: demoUser.id,
+    });
+  const transfer = (material: string, date: Date, quantity: number, to: string) =>
+    moves.push({
+      companyId, date, type: "transfer", productId: materialIds.get(material)!,
+      warehouseFromId: wh("Кухня-склад"), warehouseToId: wh(to), quantity,
+      comment: "Развоз по точкам", createdBy: demoUser.id,
+    });
+  const writeoff = (
+    material: string, date: Date, quantity: number, from: string,
+    comment: string, projectId?: string
+  ) =>
+    moves.push({
+      companyId, date, type: "writeoff", productId: materialIds.get(material)!,
+      warehouseFromId: wh(from), quantity, projectId: projectId ?? null,
+      comment, createdBy: demoUser.id,
+    });
+
+  // закупки партиями: цена растёт теми же ступеньками, что и себестоимость напитков
+  const BEAN_LOTS = [
+    { date: d(2025, 2, 5), qty: 60, price: 5200 },
+    { date: d(2025, 8, 12), qty: 80, price: 5850 },
+    { date: d(2026, 1, 20), qty: 90, price: 6500 },
+    { date: d(2026, 4, 8), qty: 70, price: 6900 },
+  ];
+  for (const lot of BEAN_LOTS) {
+    receipt("Зерно эспрессо", lot.date, lot.qty, lot.price, `Закупка партии по ${lot.price} ₸/кг`);
+  }
+  receipt("Молоко", d(2025, 3, 3), 400, 480, "Молочка, месячный запас");
+  receipt("Молоко", d(2025, 11, 4), 500, 530, "Новая цена поставщика");
+  receipt("Молоко", d(2026, 5, 6), 450, 590, "Сезонное подорожание");
+  receipt("Стаканы 300 мл", d(2025, 2, 5), 8000, 38, "Оптовая партия стаканов");
+  receipt("Стаканы 300 мл", d(2026, 2, 10), 10000, 44, "Оптовая партия стаканов");
+  receipt("Сироп карамель", d(2025, 6, 15), 40, 3200, "Сиропы на лето");
+  receipt("Сироп карамель", d(2026, 3, 12), 45, 3600, "Сиропы на лето");
+
+  // развоз по точкам и расход в работу
+  const spread: Array<[string, Date, number, string]> = [
+    ["Зерно эспрессо", d(2025, 2, 6), 25, "Точка на Абая"],
+    ["Зерно эспрессо", d(2025, 2, 6), 20, "Точка в Мега"],
+    ["Зерно эспрессо", d(2025, 8, 13), 35, "Точка на Абая"],
+    ["Зерно эспрессо", d(2026, 1, 21), 40, "Точка на Абая"],
+    ["Зерно эспрессо", d(2026, 1, 21), 30, "Точка в Мега"],
+    ["Молоко", d(2025, 3, 4), 200, "Точка на Абая"],
+    ["Молоко", d(2025, 11, 5), 250, "Точка на Абая"],
+    ["Стаканы 300 мл", d(2025, 2, 6), 4000, "Точка на Абая"],
+    ["Стаканы 300 мл", d(2026, 2, 11), 5000, "Точка в Мега"],
+  ];
+  for (const [material, date, qty, to] of spread) transfer(material, date, qty, to);
+
+  const used: Array<[string, Date, number, string, string]> = [
+    ["Зерно эспрессо", d(2025, 3, 31), 22, "Точка на Абая", "Расход за март"],
+    ["Зерно эспрессо", d(2025, 9, 30), 30, "Точка на Абая", "Расход за сентябрь"],
+    ["Зерно эспрессо", d(2026, 2, 28), 34, "Точка на Абая", "Расход за февраль"],
+    ["Зерно эспрессо", d(2026, 2, 28), 22, "Точка в Мега", "Расход за февраль"],
+    ["Молоко", d(2025, 3, 31), 180, "Точка на Абая", "Расход за март"],
+    ["Молоко", d(2025, 12, 31), 210, "Точка на Абая", "Расход за декабрь"],
+    ["Стаканы 300 мл", d(2025, 6, 30), 3500, "Точка на Абая", "Расход за полугодие"],
+    ["Стаканы 300 мл", d(2026, 3, 31), 4200, "Точка в Мега", "Расход за квартал"],
+  ];
+  for (const [material, date, qty, from, comment] of used) writeoff(material, date, qty, from, comment);
+
+  // материалы на кейтеринг: попадут в себестоимость проектов
+  writeoff("Зерно эспрессо", d(2025, 5, 20), 8, "Кухня-склад", "Кофе-брейк на свадьбу", project1.id);
+  writeoff("Молоко", d(2025, 5, 20), 60, "Кухня-склад", "Кофе-брейк на свадьбу", project1.id);
+  writeoff("Зерно эспрессо", d(2025, 10, 15), 12, "Кухня-склад", "Конференция, 2 дня", project2.id);
+  writeoff("Сироп карамель", d(2025, 10, 15), 6, "Кухня-склад", "Конференция, 2 дня", project2.id);
+  writeoff("Зерно эспрессо", d(2026, 3, 21), 10, "Кухня-склад", "Корпоратив на Наурыз", project3.id);
+  writeoff("Молоко", d(2026, 3, 21), 80, "Кухня-склад", "Корпоратив на Наурыз", project3.id);
+
+  // порча — тоже расход, но без выручки
+  writeoff("Молоко", d(2025, 7, 18), 25, "Точка на Абая", "Испортилось при поломке холодильника");
+
+  await prisma.stockMove.createMany({ data: moves });
 
   // --- операции: январь 2025 — июнь 2026 ---
   type TxnRow = {
