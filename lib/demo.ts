@@ -219,6 +219,8 @@ async function seedDemoCompany(): Promise<string> {
       { companyId, name: "Молочная ферма «Айсулу»", type: "поставщик" },
       { companyId, name: "ТОО «Аренда Плюс»", type: "арендодатель" },
       { companyId, name: "Wolt Kazakhstan", type: "партнёр" },
+      { companyId, name: "Пекарня «Тандыр»", type: "поставщик" },
+      { companyId, name: "Пакмаркет (упаковка)", type: "поставщик" },
       { companyId, name: "ИП «Праздник»", type: "клиент" },
       { companyId, name: "БЦ «Нурлы Тау»", type: "клиент" },
     ],
@@ -272,9 +274,15 @@ async function seedDemoCompany(): Promise<string> {
       })),
     });
   }
-  // без рецептуры — себестоимость только из карточки и истории (показывает оба режима)
+  // без рецептуры — себестоимость только из карточки и истории (показывает оба режима).
+  // Чизкейк закупается у пекарни готовым, поэтому по нему ведутся складские остатки:
+  // это единственный товар «купил — продал», на нём видно признание себестоимости при продаже.
   const cheesecake = await prisma.product.create({
-    data: { companyId, name: "Чизкейк", unit: "шт", basePriceMinor: t(1800), costPerUnitMinor: t(820) },
+    data: {
+      companyId, name: "Чизкейк", unit: "шт",
+      basePriceMinor: t(1800), costPerUnitMinor: t(820),
+      productGroup: "Десерты", tracksStock: true,
+    },
   });
   await prisma.productCostHistory.createMany({
     data: [
@@ -339,12 +347,24 @@ async function seedDemoCompany(): Promise<string> {
   const warehouses = await prisma.warehouse.findMany({ where: { companyId } });
   const wh = (name: string) => warehouses.find((w) => w.name === name)!.id;
 
+  // perMonth — сколько уходит в работу за средний месяц; price — цена 2025 года,
+  // дальше растёт ступеньками (lotPriceFactor), как и себестоимость напитков.
   const MATERIALS = [
-    { name: "Зерно эспрессо", unit: "кг", group: "Сырьё" },
-    { name: "Молоко", unit: "л", group: "Сырьё" },
-    { name: "Стаканы 300 мл", unit: "шт", group: "Расходники" },
-    { name: "Сироп карамель", unit: "л", group: "Сырьё" },
+    { name: "Зерно эспрессо", unit: "кг", group: "Сырьё", perMonth: 12, price: 5200,
+      supplier: "Обжарщик CoffeeLab", category: "Продукты и сырьё" },
+    { name: "Молоко", unit: "л", group: "Сырьё", perMonth: 90, price: 480,
+      supplier: "Молочная ферма «Айсулу»", category: "Продукты и сырьё" },
+    { name: "Стаканы 300 мл", unit: "шт", group: "Расходники", perMonth: 1400, price: 38,
+      supplier: "Пакмаркет (упаковка)", category: "Упаковка" },
+    { name: "Сироп карамель", unit: "л", group: "Сырьё", perMonth: 3, price: 3200,
+      supplier: "Пакмаркет (упаковка)", category: "Продукты и сырьё" },
   ];
+  /** Ступеньки закупочных цен: те же периоды, что и в истории себестоимости напитков. */
+  const lotPriceFactor = (y: number, m: number) =>
+    y === 2025 ? (m <= 6 ? 1 : 1.12) : m <= 3 ? 1.25 : 1.33;
+  /** Закупочная цена чизкейка у пекарни — совпадает с историей себестоимости продукта. */
+  const cheesecakeCost = (y: number, m: number) =>
+    y === 2025 ? (m <= 8 ? 700 : 760) : m === 1 ? 760 : 820;
   const materialIds = new Map<string, string>();
   for (const m of MATERIALS) {
     const product = await prisma.product.create({
@@ -375,73 +395,38 @@ async function seedDemoCompany(): Promise<string> {
     createdBy: string;
   };
   const moves: MoveRow[] = [];
+  const productOf = (name: string) => materialIds.get(name) ?? cheesecake.id;
   const receipt = (
-    material: string, date: Date, quantity: number, priceTenge: number, comment: string
+    material: string, date: Date, quantity: number, priceTenge: number, comment: string,
+    warehouse = "Кухня-склад"
   ) =>
     moves.push({
-      companyId, date, type: "receipt", productId: materialIds.get(material)!,
-      warehouseToId: wh("Кухня-склад"), quantity, unitCostMinor: t(priceTenge),
+      companyId, date, type: "receipt", productId: productOf(material),
+      warehouseToId: wh(warehouse), quantity, unitCostMinor: t(priceTenge),
       comment, createdBy: demoUser.id,
+    });
+  const issue = (material: string, date: Date, quantity: number, from: string, comment: string) =>
+    moves.push({
+      companyId, date, type: "issue", productId: productOf(material),
+      warehouseFromId: wh(from), quantity, comment, createdBy: demoUser.id,
     });
   const transfer = (material: string, date: Date, quantity: number, to: string) =>
     moves.push({
-      companyId, date, type: "transfer", productId: materialIds.get(material)!,
+      companyId, date, type: "transfer", productId: productOf(material),
       warehouseFromId: wh("Кухня-склад"), warehouseToId: wh(to), quantity,
       comment: "Развоз по точкам", createdBy: demoUser.id,
     });
   const writeoff = (
     material: string, date: Date, quantity: number, from: string,
     comment: string, projectId?: string
-  ) =>
+  ) => {
+    if (quantity <= 0) return;
     moves.push({
-      companyId, date, type: "writeoff", productId: materialIds.get(material)!,
+      companyId, date, type: "writeoff", productId: productOf(material),
       warehouseFromId: wh(from), quantity, projectId: projectId ?? null,
       comment, createdBy: demoUser.id,
     });
-
-  // закупки партиями: цена растёт теми же ступеньками, что и себестоимость напитков
-  const BEAN_LOTS = [
-    { date: d(2025, 2, 5), qty: 60, price: 5200 },
-    { date: d(2025, 8, 12), qty: 80, price: 5850 },
-    { date: d(2026, 1, 20), qty: 90, price: 6500 },
-    { date: d(2026, 4, 8), qty: 70, price: 6900 },
-  ];
-  for (const lot of BEAN_LOTS) {
-    receipt("Зерно эспрессо", lot.date, lot.qty, lot.price, `Закупка партии по ${lot.price} ₸/кг`);
-  }
-  receipt("Молоко", d(2025, 3, 3), 400, 480, "Молочка, месячный запас");
-  receipt("Молоко", d(2025, 11, 4), 500, 530, "Новая цена поставщика");
-  receipt("Молоко", d(2026, 5, 6), 450, 590, "Сезонное подорожание");
-  receipt("Стаканы 300 мл", d(2025, 2, 5), 8000, 38, "Оптовая партия стаканов");
-  receipt("Стаканы 300 мл", d(2026, 2, 10), 10000, 44, "Оптовая партия стаканов");
-  receipt("Сироп карамель", d(2025, 6, 15), 40, 3200, "Сиропы на лето");
-  receipt("Сироп карамель", d(2026, 3, 12), 45, 3600, "Сиропы на лето");
-
-  // развоз по точкам и расход в работу
-  const spread: Array<[string, Date, number, string]> = [
-    ["Зерно эспрессо", d(2025, 2, 6), 25, "Точка на Абая"],
-    ["Зерно эспрессо", d(2025, 2, 6), 20, "Точка в Мега"],
-    ["Зерно эспрессо", d(2025, 8, 13), 35, "Точка на Абая"],
-    ["Зерно эспрессо", d(2026, 1, 21), 40, "Точка на Абая"],
-    ["Зерно эспрессо", d(2026, 1, 21), 30, "Точка в Мега"],
-    ["Молоко", d(2025, 3, 4), 200, "Точка на Абая"],
-    ["Молоко", d(2025, 11, 5), 250, "Точка на Абая"],
-    ["Стаканы 300 мл", d(2025, 2, 6), 4000, "Точка на Абая"],
-    ["Стаканы 300 мл", d(2026, 2, 11), 5000, "Точка в Мега"],
-  ];
-  for (const [material, date, qty, to] of spread) transfer(material, date, qty, to);
-
-  const used: Array<[string, Date, number, string, string]> = [
-    ["Зерно эспрессо", d(2025, 3, 31), 22, "Точка на Абая", "Расход за март"],
-    ["Зерно эспрессо", d(2025, 9, 30), 30, "Точка на Абая", "Расход за сентябрь"],
-    ["Зерно эспрессо", d(2026, 2, 28), 34, "Точка на Абая", "Расход за февраль"],
-    ["Зерно эспрессо", d(2026, 2, 28), 22, "Точка в Мега", "Расход за февраль"],
-    ["Молоко", d(2025, 3, 31), 180, "Точка на Абая", "Расход за март"],
-    ["Молоко", d(2025, 12, 31), 210, "Точка на Абая", "Расход за декабрь"],
-    ["Стаканы 300 мл", d(2025, 6, 30), 3500, "Точка на Абая", "Расход за полугодие"],
-    ["Стаканы 300 мл", d(2026, 3, 31), 4200, "Точка в Мега", "Расход за квартал"],
-  ];
-  for (const [material, date, qty, from, comment] of used) writeoff(material, date, qty, from, comment);
+  };
 
   // материалы на кейтеринг: попадут в себестоимость проектов
   writeoff("Зерно эспрессо", d(2025, 5, 20), 8, "Кухня-склад", "Кофе-брейк на свадьбу", project1.id);
@@ -451,10 +436,8 @@ async function seedDemoCompany(): Promise<string> {
   writeoff("Зерно эспрессо", d(2026, 3, 21), 10, "Кухня-склад", "Корпоратив на Наурыз", project3.id);
   writeoff("Молоко", d(2026, 3, 21), 80, "Кухня-склад", "Корпоратив на Наурыз", project3.id);
 
-  // порча — тоже расход, но без выручки
-  writeoff("Молоко", d(2025, 7, 18), 25, "Точка на Абая", "Испортилось при поломке холодильника");
-
-  await prisma.stockMove.createMany({ data: moves });
+  // порча — расход без выручки
+  writeoff("Молоко", d(2025, 7, 18), 15, "Кухня-склад", "Испортилось при поломке холодильника");
 
   // --- операции: январь 2025 — июнь 2026 ---
   type TxnRow = {
@@ -471,6 +454,17 @@ async function seedDemoCompany(): Promise<string> {
     rows.push({ companyId, type: "income", includeInPnl: true, createdBy: demoUser.id, ...r });
   const expense = (r: Omit<TxnRow, "companyId" | "type" | "createdBy" | "includeInPnl">) =>
     rows.push({ companyId, type: "expense", includeInPnl: true, createdBy: demoUser.id, ...r });
+  /**
+   * Закупка товара на склад: деньги уходят сейчас (ДДС), но в расходы ОПУ операция
+   * не идёт — себестоимость признаётся при продаже или списании со склада.
+   */
+  const purchase = (
+    r: Omit<TxnRow, "companyId" | "type" | "createdBy" | "includeInPnl" | "periodPnl">
+  ) =>
+    rows.push({
+      companyId, type: "expense", includeInPnl: false, periodPnl: null,
+      createdBy: demoUser.id, ...r,
+    });
 
   const WEEK_DAYS = [7, 14, 21, 28];
   const WEEK_SHARE = [0.24, 0.26, 0.25, 0.25];
@@ -485,6 +479,42 @@ async function seedDemoCompany(): Promise<string> {
     let monthRevenue = 0n;
     let kaspiIncome = 0n;
     let cashIncome = 0n;
+
+    // --- склад: закупка партий и расход материалов за месяц ---
+    // Партия берётся раз в квартал с запасом, расходуется помесячно: в ОПУ материал
+    // попадает не в месяц оплаты, а по мере списания.
+    for (const mat of MATERIALS) {
+      const monthly = Math.max(1, Math.round(mat.perMonth * factor));
+      if (m === 1 || m === 4 || m === 7 || m === 10) {
+        const price = Math.round(mat.price * lotPriceFactor(y, m));
+        const lotQty = Math.max(1, Math.round(monthly * 4));
+        receipt(mat.name, d(y, m, 3), lotQty, price, `Квартальная партия по ${price} ₸/${mat.unit}`);
+        purchase({
+          amountMinor: t(price) * BigInt(lotQty), dateCashflow: d(y, m, 3),
+          categoryId: cat(mat.category), accountFromId: halyk,
+          counterpartyId: cp(mat.supplier),
+          comment: `Закупка: ${mat.name}, ${lotQty} ${mat.unit}`,
+        });
+      }
+      // половину развозим на точку, половину расходуем на кухне;
+      // на точке остаётся небольшой переходящий запас — поэтому списываем чуть меньше
+      const toPoint = Math.max(1, Math.round(monthly / 2));
+      const point = m % 2 === 0 ? "Точка в Мега" : "Точка на Абая";
+      transfer(mat.name, d(y, m, 4), toPoint, point);
+      writeoff(mat.name, d(y, m, 28), Math.round(toPoint * 0.85), point, `Расход за ${m}.${y}`);
+      writeoff(mat.name, d(y, m, 28), monthly - toPoint, "Кухня-склад", `Расход за ${m}.${y}`);
+    }
+
+    // чизкейк закупается готовым у пекарни — единственный товар «купил и продал»
+    const cakeCost = cheesecakeCost(y, m);
+    const cakeLot = Math.max(1, Math.round(150 * factor * 1.15));
+    receipt("Чизкейк", d(y, m, 2), cakeLot, cakeCost, "Поставка от пекарни", "Точка на Абая");
+    purchase({
+      amountMinor: t(cakeCost) * BigInt(cakeLot), dateCashflow: d(y, m, 2),
+      categoryId: cat("Продукты и сырьё"), accountFromId: halyk,
+      counterpartyId: cp("Пекарня «Тандыр»"),
+      comment: `Закупка: чизкейк, ${cakeLot} шт`,
+    });
 
     // продажи напитков и десерта — недельные итоги с продуктом и количеством
     const menu = [...DRINKS, { name: "Чизкейк", priceMinor: t(1800), baseQty: 150 }];
@@ -503,6 +533,10 @@ async function seedDemoCompany(): Promise<string> {
           quantity: qty,
           comment: promo ? "Продажи за неделю (акция −10 %)" : "Продажи за неделю",
         });
+        // проданный чизкейк уходит со склада: себестоимость попадёт в ОПУ этого месяца
+        if (item.name === "Чизкейк") {
+          issue("Чизкейк", d(y, m, WEEK_DAYS[w]), qty, "Точка на Абая", "Продано за неделю");
+        }
         monthRevenue += amount;
         if (toCash) cashIncome += amount;
         else kaspiIncome += amount;
@@ -551,26 +585,13 @@ async function seedDemoCompany(): Promise<string> {
       });
     }
 
-    // закуп сырья — привязан к обороту
-    const coffee = (monthRevenue * 6n) / 100n;
-    for (const day of [8, 22]) {
-      expense({
-        amountMinor: coffee, dateCashflow: d(y, m, day), periodPnl: pnl,
-        categoryId: cat("Продукты и сырьё"), accountFromId: halyk,
-        counterpartyId: cp("Обжарщик CoffeeLab"), comment: "Закуп зерна",
-      });
-    }
-    const dairy = (monthRevenue * 2n) / 100n;
-    for (const day of [4, 11, 18, 25]) {
-      expense({
-        amountMinor: dairy, dateCashflow: d(y, m, day), periodPnl: pnl,
-        categoryId: cat("Продукты и сырьё"), accountFromId: halyk,
-        counterpartyId: cp("Молочная ферма «Айсулу»"), comment: "Молоко и сливки",
-      });
-    }
+    // Мелочёвка, которую не имеет смысла ставить на складской учёт: сахар, салфетки,
+    // трубочки. Остаётся обычным переменным расходом ОПУ — рядом со строкой
+    // «Себестоимость проданных товаров» видно разницу между ними.
     expense({
       amountMinor: (monthRevenue * 3n) / 100n, dateCashflow: d(y, m, 12), periodPnl: pnl,
-      categoryId: cat("Упаковка"), accountFromId: kaspi, comment: "Стаканы, крышки, пакеты",
+      categoryId: cat("Продукты и сырьё"), accountFromId: kaspi,
+      comment: "Сахар, салфетки, трубочки (без складского учёта)",
     });
 
     // коммуналка (зимой дороже), связь, комиссии банка
@@ -654,9 +675,9 @@ async function seedDemoCompany(): Promise<string> {
     productId: catering.id, quantity: 2, comment: "Оплата по договору",
   });
   expense({
-    amountMinor: t(120_000), dateCashflow: d(2025, 5, 18), periodPnl: d(2025, 5, 1),
+    amountMinor: t(60_000), dateCashflow: d(2025, 5, 18), periodPnl: d(2025, 5, 1),
     categoryId: cat("Продукты и сырьё"), accountFromId: halyk, projectId: project1.id,
-    comment: "Закуп под мероприятие",
+    comment: "Аренда посуды и логистика (сырьё — со склада)",
   });
   income({
     amountMinor: t(500_000), dateCashflow: d(2025, 10, 17), periodPnl: d(2025, 10, 1),
@@ -665,9 +686,9 @@ async function seedDemoCompany(): Promise<string> {
     productId: catering.id, quantity: 3, comment: "Оплата по договору",
   });
   expense({
-    amountMinor: t(180_000), dateCashflow: d(2025, 10, 14), periodPnl: d(2025, 10, 1),
+    amountMinor: t(90_000), dateCashflow: d(2025, 10, 14), periodPnl: d(2025, 10, 1),
     categoryId: cat("Продукты и сырьё"), accountFromId: halyk, projectId: project2.id,
-    comment: "Закуп под конференцию",
+    comment: "Аренда оборудования и персонал (сырьё — со склада)",
   });
   // проект с долгом: получили 250 из 400 тысяч
   income({
@@ -677,9 +698,9 @@ async function seedDemoCompany(): Promise<string> {
     productId: catering.id, quantity: 2, comment: "Частичная оплата (долг 150 000 ₸)",
   });
   expense({
-    amountMinor: t(130_000), dateCashflow: d(2026, 3, 19), periodPnl: d(2026, 3, 1),
+    amountMinor: t(60_000), dateCashflow: d(2026, 3, 19), periodPnl: d(2026, 3, 1),
     categoryId: cat("Продукты и сырьё"), accountFromId: halyk, projectId: project3.id,
-    comment: "Закуп под корпоратив",
+    comment: "Логистика и персонал (сырьё — со склада)",
   });
   // проект в работе: предоплата
   income({
@@ -695,6 +716,8 @@ async function seedDemoCompany(): Promise<string> {
   });
 
   await prisma.transaction.createMany({ data: rows });
+  // движения пишем после операций: часть из них сгенерирована внутри того же цикла
+  await prisma.stockMove.createMany({ data: moves });
 
   // --- планы на 2026 (продажи с сезонностью + расходы) ---
   const salesPlanRows = [];
@@ -721,7 +744,7 @@ async function seedDemoCompany(): Promise<string> {
       { companyId, month, expenseType: "payroll" as const, amountMinor: t(750_000), categoryId: cat("Зарплата"), percentOfRevenue: null, comment: null },
       { companyId, month, expenseType: "fixed" as const, amountMinor: t(75_000), categoryId: cat("Коммунальные услуги"), percentOfRevenue: null, comment: null },
       { companyId, month, expenseType: "fixed" as const, amountMinor: t(100_000), categoryId: cat("Маркетинг и реклама"), percentOfRevenue: null, comment: null },
-      { companyId, month, expenseType: "percent_of_revenue" as const, amountMinor: null, categoryId: cat("Продукты и сырьё"), percentOfRevenue: 0.2, comment: "Сырьё ≈ 20 % оборота" },
+      { companyId, month, expenseType: "percent_of_revenue" as const, amountMinor: null, categoryId: cat("Продукты и сырьё"), percentOfRevenue: 0.04, comment: "Мелочёвка ≈ 4 % оборота (основное сырьё идёт через склад)" },
       { companyId, month, expenseType: "percent_of_revenue" as const, amountMinor: null, categoryId: cat("Упаковка"), percentOfRevenue: 0.03, comment: null },
       { companyId, month, expenseType: "tax" as const, amountMinor: null, categoryId: cat("Налоги"), percentOfRevenue: 0.03, comment: "ИП упрощёнка" }
     );
