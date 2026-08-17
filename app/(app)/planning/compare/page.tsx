@@ -6,17 +6,27 @@ import { pnlForMonth } from "@/lib/calc/pnl";
 import { plannedRevenueForMonth, plannedUnitsForMonth } from "@/lib/calc/sales";
 import { totalPlannedExpensesMinor, type ExpensePlanKind } from "@/lib/calc/expenses";
 import { formatMoney } from "@/lib/money";
-import { MONTH_NAMES_RU, monthStart } from "@/lib/period";
+import { MONTH_NAMES_RU } from "@/lib/period";
+import { monthsInRange, rangeFromSearchParams, snapToMonths } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 
 export default async function ComparePage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const tenant = await requireTenant();
   const params = await searchParams;
-  const year = Number.parseInt(params.year ?? "", 10) || new Date().getFullYear();
-  const range = { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 1)) };
+  // план/факт живёт по месяцам — период по умолчанию год
+  const period = snapToMonths(rangeFromSearchParams(params, "year"));
+  const range = { gte: period.from, lte: period.to };
 
   const [{ txns }, salesRows, expenseRows] = await Promise.all([
     loadCalcData(tenant.companyId),
@@ -32,8 +42,9 @@ export default async function ComparePage({
     seasonalityFactor: Number(r.seasonalityFactor),
   }));
 
-  const currentYear = new Date().getFullYear();
-  const months = Array.from({ length: 12 }, (_v, i) => monthStart(year, i + 1));
+  const months = monthsInRange(period.from, period.to);
+  // период может пересекать годы — тогда в таблице показываем год рядом с месяцем
+  const multiYear = period.from.getUTCFullYear() !== period.to.getUTCFullYear();
 
   const rows = months.map((month) => {
     const planRevenue = plannedRevenueForMonth(salesCalc, month);
@@ -83,26 +94,15 @@ export default async function ComparePage({
       <h1>План / факт</h1>
       <p className="page-sub">
         Сравнение планов (<Link href="/planning/sales">продажи</Link>,{" "}
-        <Link href="/planning/expenses">расходы</Link>) с фактом из ОПУ за {year} год
+        <Link href="/planning/expenses">расходы</Link>) с фактом из ОПУ за {period.label}
       </p>
 
-      <form method="get" action="/planning/compare" className="toolbar">
-        <select name="year" defaultValue={year}>
-          {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
-        <button type="submit" className="secondary">
-          Показать
-        </button>
-      </form>
+      <RangePicker range={period} action="/planning/compare" monthsOnly />
 
       {!hasAny && (
         <div className="alert info">
-          Нет данных за {year} год: заполните план продаж/расходов и вносите операции — сравнение
-          построится автоматически.
+          Нет данных за {period.label}: заполните план продаж/расходов и вносите операции —
+          сравнение построится автоматически.
         </div>
       )}
 
@@ -127,7 +127,10 @@ export default async function ComparePage({
                 r.planRevenue === 0n && r.factRevenue === 0n && r.planExpenses === 0n && r.factExpenses === 0n;
               return (
                 <tr key={r.month.toISOString()}>
-                  <td>{MONTH_NAMES_RU[r.month.getUTCMonth()]}</td>
+                  <td>
+                    {MONTH_NAMES_RU[r.month.getUTCMonth()]}
+                    {multiYear ? ` ${r.month.getUTCFullYear()}` : ""}
+                  </td>
                   {empty ? (
                     <td colSpan={7} className="muted">
                       нет данных

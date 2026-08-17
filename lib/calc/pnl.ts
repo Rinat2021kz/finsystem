@@ -3,7 +3,6 @@
 // Рентабельность при нулевой выручке = null («нет данных»), а не ошибка.
 
 import { safeRatio } from "@/lib/money";
-import { sameMonth } from "@/lib/period";
 import type { CalcTxn } from "./types";
 
 export interface PnlReport {
@@ -22,15 +21,30 @@ export interface PnlReport {
   profitability: number | null;
 }
 
-function inPnl(t: CalcTxn, month: Date): boolean {
+/** Порядковый номер месяца — для сравнения периодов без учёта дня. */
+function monthKey(d: Date): number {
+  return d.getUTCFullYear() * 12 + d.getUTCMonth();
+}
+
+function inPnl(t: CalcTxn, months: Set<number>): boolean {
   if (!t.includeInPnl || !t.affectsPnl) return false;
   if (t.type === "transfer") return false; // перевод — не доход и не расход
   if (t.periodPnl === null) return false;
-  return sameMonth(t.periodPnl, month);
+  return months.has(monthKey(t.periodPnl));
 }
 
 /** ОПУ за месяц (month — 1-е число месяца). */
 export function pnlForMonth(txns: CalcTxn[], month: Date): PnlReport {
+  return pnlForMonths(txns, [month]);
+}
+
+/**
+ * ОПУ за несколько месяцев — квартал, полугодие, год, произвольный диапазон месяцев.
+ * Накопительный итог: показатели суммируются, рентабельность считается от суммарной выручки
+ * (а не как среднее помесячных — это разные числа).
+ */
+export function pnlForMonths(txns: CalcTxn[], months: Date[]): PnlReport {
+  const keys = new Set(months.map(monthKey));
   let revenue = 0n;
   let variable = 0n;
   let fixed = 0n;
@@ -41,7 +55,7 @@ export function pnlForMonth(txns: CalcTxn[], month: Date): PnlReport {
   let other = 0n;
 
   for (const t of txns) {
-    if (!inPnl(t, month)) continue;
+    if (!inPnl(t, keys)) continue;
     if (t.type === "income") {
       revenue += t.amountMinor;
       continue;

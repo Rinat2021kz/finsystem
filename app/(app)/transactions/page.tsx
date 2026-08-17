@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db";
 import { requireTenant, canWrite } from "@/lib/tenancy";
 import { formatMoney } from "@/lib/money";
 import { formatDateRu, formatMonthRu } from "@/lib/period";
+import { hasRangeParams, rangeFromSearchParams } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 import { HelpNote } from "@/components/HelpNote";
 import { TransactionForm } from "./form";
 import { deleteTransactionAction } from "./actions";
@@ -14,6 +16,10 @@ export default async function TransactionsPage({
 }: {
   searchParams: Promise<{
     add?: string;
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
     from?: string;
     to?: string;
     account?: string;
@@ -25,6 +31,10 @@ export default async function TransactionsPage({
   const tenant = await requireTenant();
   const params = await searchParams;
   const addType = (["income", "expense", "transfer"] as const).find((t) => t === params.add);
+
+  // период применяем только если пользователь его выбрал — иначе показываем всё
+  const range = rangeFromSearchParams(params);
+  const filtered = hasRangeParams(params);
 
   const [accounts, categories, counterparties, company, projects, products] = await Promise.all([
     prisma.account.findMany({
@@ -57,10 +67,7 @@ export default async function TransactionsPage({
   const where: Parameters<typeof prisma.transaction.findMany>[0] = {
     where: {
       companyId: tenant.companyId,
-      ...(params.from ? { dateCashflow: { gte: new Date(params.from) } } : {}),
-      ...(params.to
-        ? { dateCashflow: { ...(params.from ? { gte: new Date(params.from) } : {}), lte: new Date(params.to) } }
-        : {}),
+      ...(filtered ? { dateCashflow: { gte: range.from, lte: range.to } } : {}),
       ...(params.account
         ? { OR: [{ accountFromId: params.account }, { accountToId: params.account }] }
         : {}),
@@ -133,15 +140,7 @@ export default async function TransactionsPage({
         />
       )}
 
-      <form method="get" action="/transactions" className="toolbar">
-        <label className="field">
-          С даты
-          <input type="date" name="from" defaultValue={params.from ?? ""} />
-        </label>
-        <label className="field">
-          По дату
-          <input type="date" name="to" defaultValue={params.to ?? ""} />
-        </label>
+      <RangePicker range={range} action="/transactions">
         <label className="field">
           Счёт
           <select name="account" defaultValue={params.account ?? ""}>
@@ -164,10 +163,17 @@ export default async function TransactionsPage({
             ))}
           </select>
         </label>
-        <button type="submit" className="secondary">
-          Фильтровать
-        </button>
-      </form>
+      </RangePicker>
+
+      <p className="steps">
+        {filtered ? (
+          <>
+            Показаны операции за {range.label}. <Link href="/transactions">Показать все</Link>
+          </>
+        ) : (
+          <>Показаны последние операции за всё время — выберите период, чтобы сузить список.</>
+        )}
+      </p>
 
       <div className="table-wrap">
         <table>

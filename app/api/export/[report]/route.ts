@@ -1,4 +1,6 @@
-// Экспорт отчётов в Excel (SPEC раздел 10). Формат периода: ?year=2026&month=3.
+// Экспорт отчётов в Excel (SPEC раздел 10).
+// Период — в том же формате, что и на страницах отчётов (см. lib/range.ts):
+// ?preset=quarter&year=2026&part=2 или ?preset=custom&from=…&to=…
 
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
@@ -6,9 +8,9 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { loadCalcData } from "@/lib/reports";
 import { cashflowForAccount, cashflowSummary } from "@/lib/calc/cashflow";
-import { pnlForMonth } from "@/lib/calc/pnl";
+import { pnlForMonths } from "@/lib/calc/pnl";
 import { balanceReport } from "@/lib/calc/balance";
-import { formatMonthRu, monthEnd, monthStart } from "@/lib/period";
+import { monthsInRange, rangeFromSearchParams, snapToMonths } from "@/lib/range";
 import { COMPANY_COOKIE } from "@/lib/tenancy";
 
 export const runtime = "nodejs";
@@ -34,17 +36,21 @@ export async function GET(
 
   const { report } = await params;
   const sp = req.nextUrl.searchParams;
-  const year = Number(sp.get("year"));
-  const month = Number(sp.get("month"));
-  if (!Number.isInteger(year) || !Number.isInteger(month) || month < 1 || month > 12) {
-    return NextResponse.json({ error: "Некорректный период" }, { status: 400 });
-  }
-  const start = monthStart(year, month);
-  const end = monthEnd(year, month);
+  const range = rangeFromSearchParams({
+    preset: sp.get("preset") ?? undefined,
+    year: sp.get("year") ?? undefined,
+    month: sp.get("month") ?? undefined,
+    part: sp.get("part") ?? undefined,
+    from: sp.get("from") ?? undefined,
+    to: sp.get("to") ?? undefined,
+  });
+  const start = range.from;
+  const end = range.to;
 
   const { txns, accounts } = await loadCalcData(companyId);
   const wb = new ExcelJS.Workbook();
-  const periodLabel = formatMonthRu(start);
+  const periodLabel = range.label;
+  const fileSuffix = `${start.toISOString().slice(0, 10)}_${end.toISOString().slice(0, 10)}`;
 
   if (report === "cashflow") {
     const ws = wb.addWorksheet("ДДС");
@@ -81,8 +87,10 @@ export async function GET(
   } else if (report === "pnl") {
     const ws = wb.addWorksheet("ОПУ");
     ws.columns = [{ width: 36 }, { width: 18 }];
-    const pnl = pnlForMonth(txns, start);
-    ws.addRow([`ОПУ за ${periodLabel}`]).font = { bold: true, size: 14 };
+    // ОПУ живёт по экономическим месяцам — период округляем до целых
+    const pnlRange = snapToMonths(range);
+    const pnl = pnlForMonths(txns, monthsInRange(pnlRange.from, pnlRange.to));
+    ws.addRow([`ОПУ за ${pnlRange.label}`]).font = { bold: true, size: 14 };
     ws.addRow([]);
     for (const [label, v] of [
       ["Выручка", pnl.revenueMinor],
@@ -137,7 +145,7 @@ export async function GET(
   return new NextResponse(buffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="${report}-${year}-${String(month).padStart(2, "0")}.xlsx"`,
+      "Content-Disposition": `attachment; filename="${report}-${fileSuffix}.xlsx"`,
     },
   });
 }

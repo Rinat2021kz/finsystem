@@ -1,21 +1,29 @@
 import { requireTenant } from "@/lib/tenancy";
-import { loadCalcData, periodFromSearchParams } from "@/lib/reports";
+import { loadCalcData } from "@/lib/reports";
 import { cashflowForAccount, cashflowSummary } from "@/lib/calc/cashflow";
 import { formatMoney } from "@/lib/money";
-import { formatMonthRu, monthEnd, monthStart } from "@/lib/period";
-import { PeriodPicker } from "@/components/PeriodPicker";
+import { rangeFromSearchParams, rangeToQuery } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 import { PrintButton } from "@/components/PrintButton";
 import { HelpNote } from "@/components/HelpNote";
 
 export default async function CashflowPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; month?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const tenant = await requireTenant();
-  const { year, month } = periodFromSearchParams(await searchParams);
-  const start = monthStart(year, month);
-  const end = monthEnd(year, month);
+  // ДДС считается по дате платежа — произвольный диапазон дат здесь корректен
+  const range = rangeFromSearchParams(await searchParams);
+  const start = range.from;
+  const end = range.to;
 
   const { txns, accounts } = await loadCalcData(tenant.companyId);
   const summary = cashflowSummary(txns, accounts, start, end);
@@ -27,8 +35,8 @@ export default async function CashflowPage({
   return (
     <>
       <h1>ДДС — движение денег</h1>
-      <p className="page-sub">Как двигались деньги за {formatMonthRu(start)}</p>
-      <PeriodPicker year={year} month={month} action="/reports/cashflow" />
+      <p className="page-sub">Как двигались деньги за {range.label}</p>
+      <RangePicker range={range} action="/reports/cashflow" />
       <HelpNote>
         ДДС отвечает на вопрос <strong>«где деньги?»</strong>: сколько пришло и ушло по дате
         оплаты. Это не прибыль — предоплата от клиента попадёт сюда сразу, даже если работу вы
@@ -37,7 +45,7 @@ export default async function CashflowPage({
         счёту видны отдельной строкой.
       </HelpNote>
       <div className="toolbar no-print">
-        <a className="btn secondary" href={`/api/export/cashflow?year=${year}&month=${month}`}>
+        <a className="btn secondary" href={`/api/export/cashflow?${rangeToQuery(range)}`}>
           Скачать Excel
         </a>
         <PrintButton />

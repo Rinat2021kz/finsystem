@@ -6,6 +6,8 @@ import { formatMoney, formatPercent } from "@/lib/money";
 import { plannedExpenseMinor, type ExpensePlanKind } from "@/lib/calc/expenses";
 import { plannedRevenueForMonth, plannedUnitsForMonth } from "@/lib/calc/sales";
 import { MONTH_NAMES_RU, formatMonthRu } from "@/lib/period";
+import { rangeFromSearchParams } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 import { addExpensePlanRowAction, deleteExpensePlanRowAction } from "../actions";
 
 const TYPE_LABELS: Record<ExpensePlanKind, string> = {
@@ -21,12 +23,21 @@ const TYPE_LABELS: Record<ExpensePlanKind, string> = {
 export default async function ExpensePlanPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const tenant = await requireTenant();
   const params = await searchParams;
-  const year = Number.parseInt(params.year ?? "", 10) || new Date().getFullYear();
-  const range = { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 1)) };
+  // план живёт по месяцам — период по умолчанию год
+  const period = rangeFromSearchParams(params, "year");
+  const year = period.year;
+  const range = { gte: period.from, lte: period.to };
 
   const [rows, salesRows, categories] = await Promise.all([
     prisma.expensePlan.findMany({
@@ -68,18 +79,7 @@ export default async function ExpensePlanPage({
         <Link href="/planning/sales">плана продаж</Link> того же месяца.
       </p>
 
-      <form method="get" action="/planning/expenses" className="toolbar">
-        <select name="year" defaultValue={year}>
-          {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
-        <button type="submit" className="secondary">
-          Показать
-        </button>
-      </form>
+      <RangePicker range={period} action="/planning/expenses" monthsOnly />
 
       {writable && (
         <form action={addExpensePlanRowAction} className="panel">

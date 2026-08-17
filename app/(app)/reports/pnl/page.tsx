@@ -1,78 +1,102 @@
 import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
-import { loadCalcData, periodFromSearchParams } from "@/lib/reports";
-import { pnlForMonth } from "@/lib/calc/pnl";
+import { loadCalcData } from "@/lib/reports";
+import { pnlForMonth, pnlForMonths, type PnlReport } from "@/lib/calc/pnl";
 import { formatMoney, formatPercent } from "@/lib/money";
-import { formatMonthRu, monthStart } from "@/lib/period";
-import { PeriodPicker } from "@/components/PeriodPicker";
+import { MONTH_NAMES_RU } from "@/lib/period";
+import { monthsInRange, rangeFromSearchParams, rangeToQuery, snapToMonths } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 import { PrintButton } from "@/components/PrintButton";
 import { HelpNote } from "@/components/HelpNote";
 import { closeMonthAction, reopenMonthAction } from "../actions";
 
+interface PnlRow {
+  label: string;
+  get: (p: PnlReport) => bigint;
+  strong?: boolean;
+  negative?: boolean;
+}
+
+const ROWS: PnlRow[] = [
+  { label: "Выручка", get: (p) => p.revenueMinor, strong: true },
+  { label: "Переменные расходы", get: (p) => p.variableExpensesMinor, negative: true },
+  { label: "Валовая прибыль", get: (p) => p.grossProfitMinor, strong: true },
+  { label: "Постоянные расходы", get: (p) => p.fixedExpensesMinor, negative: true },
+  { label: "Фонд оплаты труда", get: (p) => p.payrollMinor, negative: true },
+  { label: "Прочие расходы", get: (p) => p.otherExpensesMinor, negative: true },
+  { label: "Операционная прибыль", get: (p) => p.operatingProfitMinor, strong: true },
+  { label: "Налоги", get: (p) => p.taxesMinor, negative: true },
+  { label: "Проценты по займам", get: (p) => p.interestMinor, negative: true },
+  { label: "Амортизация", get: (p) => p.depreciationMinor, negative: true },
+  { label: "Чистая прибыль", get: (p) => p.netProfitMinor, strong: true },
+];
+
 export default async function PnlPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; month?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const tenant = await requireTenant();
-  const { year, month } = periodFromSearchParams(await searchParams);
-  const period = monthStart(year, month);
+  // ОПУ живёт по экономическим месяцам — произвольный диапазон округляем до целых
+  const range = snapToMonths(rangeFromSearchParams(await searchParams));
+  const months = monthsInRange(range.from, range.to);
+  const single = months.length === 1;
 
   const { txns } = await loadCalcData(tenant.companyId);
-  const pnl = pnlForMonth(txns, period);
+  const total = pnlForMonths(txns, months);
+  const monthly = months.map((m) => ({ month: m, pnl: pnlForMonth(txns, m) }));
 
-  const snapshot = await prisma.reportSnapshot.findUnique({
-    where: { companyId_period: { companyId: tenant.companyId, period } },
-  });
+  // закрытие месяца применимо только к одному месяцу
+  const snapshot = single
+    ? await prisma.reportSnapshot.findUnique({
+        where: { companyId_period: { companyId: tenant.companyId, period: months[0] } },
+      })
+    : null;
   const closed = snapshot?.isClosed ?? false;
   const admin = isAdmin(tenant.role);
-
-  const rows: Array<{ label: string; value: bigint; strong?: boolean; negative?: boolean }> = [
-    { label: "Выручка", value: pnl.revenueMinor, strong: true },
-    { label: "Переменные расходы", value: pnl.variableExpensesMinor, negative: true },
-    { label: "Валовая прибыль", value: pnl.grossProfitMinor, strong: true },
-    { label: "Постоянные расходы", value: pnl.fixedExpensesMinor, negative: true },
-    { label: "Фонд оплаты труда", value: pnl.payrollMinor, negative: true },
-    { label: "Прочие расходы", value: pnl.otherExpensesMinor, negative: true },
-    { label: "Операционная прибыль", value: pnl.operatingProfitMinor, strong: true },
-    { label: "Налоги", value: pnl.taxesMinor, negative: true },
-    { label: "Проценты по займам", value: pnl.interestMinor, negative: true },
-    { label: "Амортизация", value: pnl.depreciationMinor, negative: true },
-    { label: "Чистая прибыль", value: pnl.netProfitMinor, strong: true },
-  ];
+  const closeYear = months[0].getUTCFullYear();
+  const closeMonth = months[0].getUTCMonth() + 1;
 
   return (
     <>
       <h1>ОПУ — прибыли и убытки</h1>
       <p className="page-sub">
-        Экономический результат за {formatMonthRu(period)} (по месяцу учёта, не по дате оплаты)
+        Экономический результат за {range.label} (по месяцу учёта, не по дате оплаты)
       </p>
-      <PeriodPicker year={year} month={month} action="/reports/pnl" />
+      <RangePicker range={range} action="/reports/pnl" monthsOnly />
       <HelpNote>
         ОПУ отвечает на вопрос <strong>«заработали ли мы?»</strong>. Операции попадают сюда по
         «месяцу учёта», а не по дате оплаты: аренда за январь, оплаченная в декабре, уменьшит
         прибыль января — хотя деньги ушли в декабре (в декабрьском ДДС). Переводы между счетами
-        сюда не попадают вовсе. «Закрыть месяц» фиксирует цифры: после закрытия операции месяца
-        нельзя менять, отчёт сохраняется снимком.
+        сюда не попадают вовсе. За период больше месяца показатели складываются: колонка «Итого»
+        — это накопительный результат, а рентабельность в ней считается от суммарной выручки.
+        «Закрыть месяц» фиксирует цифры: после закрытия операции месяца нельзя менять.
       </HelpNote>
       <div className="toolbar no-print">
-        <a className="btn secondary" href={`/api/export/pnl?year=${year}&month=${month}`}>
+        <a className="btn secondary" href={`/api/export/pnl?${rangeToQuery(range)}`}>
           Скачать Excel
         </a>
         <PrintButton />
-        {admin && !closed && (
+        {single && admin && !closed && (
           <form action={closeMonthAction}>
-            <input type="hidden" name="year" value={year} />
-            <input type="hidden" name="month" value={month} />
+            <input type="hidden" name="year" value={closeYear} />
+            <input type="hidden" name="month" value={closeMonth} />
             <button type="submit" className="secondary">
               Закрыть месяц
             </button>
           </form>
         )}
-        {admin && closed && (
+        {single && admin && closed && (
           <form action={reopenMonthAction}>
-            <input type="hidden" name="year" value={year} />
-            <input type="hidden" name="month" value={month} />
+            <input type="hidden" name="year" value={closeYear} />
+            <input type="hidden" name="month" value={closeMonth} />
             <button type="submit" className="danger">
               Открыть месяц
             </button>
@@ -85,32 +109,64 @@ export default async function PnlPage({
           Месяц закрыт: операции этого периода защищены от изменений, отчёт зафиксирован снимком.
         </div>
       )}
+      {!single && (
+        <div className="alert info no-print">
+          Показан период из {months.length} мес. Закрыть или открыть месяц можно, выбрав его
+          отдельно (период «Месяц»).
+        </div>
+      )}
 
       <div className="table-wrap">
         <table>
           <thead>
             <tr>
               <th>Статья</th>
-              <th className="num">Сумма</th>
+              {!single &&
+                monthly.map((m) => (
+                  <th key={m.month.toISOString()} className="num">
+                    {MONTH_NAMES_RU[m.month.getUTCMonth()].slice(0, 3)}{" "}
+                    {String(m.month.getUTCFullYear()).slice(2)}
+                  </th>
+                ))}
+              <th className="num">{single ? "Сумма" : "Итого"}</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {ROWS.map((r) => (
               <tr key={r.label} className={r.strong ? "total" : ""}>
                 <td>{r.label}</td>
-                <td className={`num ${r.negative && r.value > 0n ? "expense" : ""}`}>
-                  {r.negative && r.value > 0n ? "−" : ""}
-                  {formatMoney(r.value)}
+                {!single &&
+                  monthly.map((m) => {
+                    const v = r.get(m.pnl);
+                    return (
+                      <td
+                        key={m.month.toISOString()}
+                        className={`num muted ${r.negative && v > 0n ? "expense" : ""}`}
+                      >
+                        {r.negative && v > 0n ? "−" : ""}
+                        {formatMoney(v)}
+                      </td>
+                    );
+                  })}
+                <td className={`num ${r.negative && r.get(total) > 0n ? "expense" : ""}`}>
+                  {r.negative && r.get(total) > 0n ? "−" : ""}
+                  {formatMoney(r.get(total))}
                 </td>
               </tr>
             ))}
             <tr>
               <td>Рентабельность по чистой прибыли</td>
+              {!single &&
+                monthly.map((m) => (
+                  <td key={m.month.toISOString()} className="num muted">
+                    {m.pnl.profitability === null ? "—" : formatPercent(m.pnl.profitability)}
+                  </td>
+                ))}
               <td className="num">
-                {pnl.profitability === null ? (
+                {total.profitability === null ? (
                   <span className="badge gray">нет выручки для расчёта</span>
                 ) : (
-                  formatPercent(pnl.profitability)
+                  formatPercent(total.profitability)
                 )}
               </td>
             </tr>

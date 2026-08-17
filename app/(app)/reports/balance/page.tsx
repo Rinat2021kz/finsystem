@@ -1,21 +1,28 @@
 import { requireTenant } from "@/lib/tenancy";
-import { loadCalcData, periodFromSearchParams } from "@/lib/reports";
+import { loadCalcData } from "@/lib/reports";
 import { balanceReport } from "@/lib/calc/balance";
 import { formatMoney, formatPercent } from "@/lib/money";
-import { formatMonthRu, monthEnd, monthStart } from "@/lib/period";
-import { PeriodPicker } from "@/components/PeriodPicker";
+import { rangeFromSearchParams, rangeToQuery } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 import { PrintButton } from "@/components/PrintButton";
 import { HelpNote } from "@/components/HelpNote";
 
 export default async function BalancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string; month?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const tenant = await requireTenant();
-  const { year, month } = periodFromSearchParams(await searchParams);
-  const start = monthStart(year, month);
-  const end = monthEnd(year, month);
+  const range = rangeFromSearchParams(await searchParams);
+  const start = range.from;
+  const end = range.to;
 
   const { txns, accounts } = await loadCalcData(tenant.companyId);
   const report = balanceReport(txns, accounts, start, end);
@@ -23,8 +30,8 @@ export default async function BalancePage({
   return (
     <>
       <h1>Баланс денег</h1>
-      <p className="page-sub">Остатки по счетам за {formatMonthRu(start)}</p>
-      <PeriodPicker year={year} month={month} action="/reports/balance" />
+      <p className="page-sub">Остатки по счетам за {range.label}</p>
+      <RangePicker range={range} action="/reports/balance" />
       <HelpNote>
         Сколько денег лежит на каждом счёте на начало и конец периода: стартовый остаток счёта
         плюс все поступления, минус выплаты, с учётом переводов. Если остаток в системе не
@@ -32,7 +39,7 @@ export default async function BalancePage({
         дважды: сверьте список операций за период по этому счёту.
       </HelpNote>
       <div className="toolbar no-print">
-        <a className="btn secondary" href={`/api/export/balance?year=${year}&month=${month}`}>
+        <a className="btn secondary" href={`/api/export/balance?${rangeToQuery(range)}`}>
           Скачать Excel
         </a>
         <PrintButton />

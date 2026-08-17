@@ -5,6 +5,8 @@ import { requireTenant, canWrite } from "@/lib/tenancy";
 import { formatMoney } from "@/lib/money";
 import { rowRevenueMinor } from "@/lib/calc/sales";
 import { MONTH_NAMES_RU, formatMonthRu } from "@/lib/period";
+import { rangeFromSearchParams } from "@/lib/range";
+import { RangePicker } from "@/components/RangePicker";
 import {
   generateSalesPlanAction,
   deleteSalesPlanRowAction,
@@ -14,11 +16,20 @@ import {
 export default async function SalesPlanPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    year?: string;
+    month?: string;
+    part?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   const tenant = await requireTenant();
   const params = await searchParams;
-  const year = Number.parseInt(params.year ?? "", 10) || new Date().getFullYear();
+  // план живёт по месяцам — период по умолчанию год
+  const range = rangeFromSearchParams(params, "year");
+  const year = range.year;
 
   const [products, rows] = await Promise.all([
     prisma.product.findMany({
@@ -28,7 +39,7 @@ export default async function SalesPlanPage({
     prisma.salesPlan.findMany({
       where: {
         companyId: tenant.companyId,
-        month: { gte: new Date(Date.UTC(year, 0, 1)), lte: new Date(Date.UTC(year, 11, 1)) },
+        month: { gte: range.from, lte: range.to },
       },
       orderBy: [{ month: "asc" }],
     }),
@@ -54,18 +65,7 @@ export default async function SalesPlanPage({
         Продукты — в разделе <Link href="/settings/products">Продукты</Link>.
       </p>
 
-      <form method="get" action="/planning/sales" className="toolbar">
-        <select name="year" defaultValue={year}>
-          {[currentYear - 1, currentYear, currentYear + 1, currentYear + 2].map((y) => (
-            <option key={y} value={y}>
-              {y}
-            </option>
-          ))}
-        </select>
-        <button type="submit" className="secondary">
-          Показать
-        </button>
-      </form>
+      <RangePicker range={range} action="/planning/sales" monthsOnly />
 
       {writable && products.length === 0 && (
         <div className="alert info">
@@ -151,7 +151,7 @@ export default async function SalesPlanPage({
             {rows.length === 0 && (
               <tr>
                 <td colSpan={7} className="muted">
-                  Плана на {year} год пока нет
+                  Плана за {range.label} пока нет
                 </td>
               </tr>
             )}
