@@ -24,6 +24,32 @@ describe("Тест 5: проект с долгом", () => {
   });
 });
 
+describe("Материалы со склада в себестоимости проекта", () => {
+  // договор 500 000, оплачено 200 000, деньгами потрачено 100 000, материалов на 80 000
+  const m = projectMetrics(
+    50_000_000n,
+    [
+      { type: "income", amountMinor: 20_000_000n },
+      { type: "expense", amountMinor: 10_000_000n },
+    ],
+    8_000_000n
+  );
+
+  it("материалы входят в расходы проекта", () => {
+    expect(m.materialsCostMinor).toBe(8_000_000n);
+    expect(m.expensesMinor).toBe(18_000_000n);
+  });
+  it("маржа уменьшается на себестоимость материалов", () => {
+    expect(m.plannedMarginMinor).toBe(32_000_000n);
+    expect(m.cashMarginMinor).toBe(2_000_000n);
+  });
+  it("без склада показатели считаются как раньше", () => {
+    const without = projectMetrics(50_000_000n, [{ type: "expense", amountMinor: 10_000_000n }]);
+    expect(without.materialsCostMinor).toBe(0n);
+    expect(without.expensesMinor).toBe(10_000_000n);
+  });
+});
+
 describe("Защита от деления на ноль в проектах", () => {
   it("нулевая стоимость договора → плановая рентабельность null", () => {
     const m = projectMetrics(0n, [{ type: "expense", amountMinor: 1_000n }]);

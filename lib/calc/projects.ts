@@ -12,7 +12,10 @@ export interface ProjectTxn {
 export interface ProjectMetrics {
   paidFactMinor: bigint;
   debtMinor: bigint;
+  /** Все расходы проекта: деньгами + материалами со склада. */
   expensesMinor: bigint;
+  /** Из них — себестоимость материалов, списанных на проект со склада. */
+  materialsCostMinor: bigint;
   plannedMarginMinor: bigint;
   cashMarginMinor: bigint;
   /** planned_margin / contract_value; null если стоимость договора ≤ 0. */
@@ -21,18 +24,24 @@ export interface ProjectMetrics {
   cashProfitability: number | null;
 }
 
+/**
+ * @param materialsCostMinor Себестоимость материалов, списанных на проект со склада.
+ *   Это реальные затраты заказа, за которые деньги ушли раньше — при закупке.
+ */
 export function projectMetrics(
   contractValueMinor: bigint,
-  txns: ProjectTxn[]
+  txns: ProjectTxn[],
+  materialsCostMinor: bigint = 0n
 ): ProjectMetrics {
   let paid = 0n;
-  let expenses = 0n;
+  let cashExpenses = 0n;
   for (const t of txns) {
     if (t.type === "income") paid += t.amountMinor;
-    else if (t.type === "expense") expenses += t.amountMinor;
+    else if (t.type === "expense") cashExpenses += t.amountMinor;
     // переводы не влияют на показатели проекта
   }
 
+  const expenses = cashExpenses + materialsCostMinor;
   const plannedMargin = contractValueMinor - expenses;
   const cashMargin = paid - expenses;
 
@@ -40,6 +49,7 @@ export function projectMetrics(
     paidFactMinor: paid,
     debtMinor: contractValueMinor - paid,
     expensesMinor: expenses,
+    materialsCostMinor,
     plannedMarginMinor: plannedMargin,
     cashMarginMinor: cashMargin,
     plannedProfitability:

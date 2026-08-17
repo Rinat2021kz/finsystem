@@ -5,6 +5,7 @@ import { requireTenant, canWrite } from "@/lib/tenancy";
 import { projectMetrics } from "@/lib/calc/projects";
 import { formatMoney, formatPercent } from "@/lib/money";
 import { formatDateRu } from "@/lib/period";
+import { formatQuantity, loadProjectMaterials } from "@/lib/stock";
 import { TrafficDot, trafficBySign, trafficByRatio } from "@/components/Traffic";
 import { PrintButton } from "@/components/PrintButton";
 import { HelpNote } from "@/components/HelpNote";
@@ -32,9 +33,14 @@ export default async function ProjectPage({
     orderBy: { dateCashflow: "desc" },
   });
 
+  // материалы, списанные на проект со склада: деньги за них ушли при закупке,
+  // но затратой заказа они становятся в момент списания
+  const materials = await loadProjectMaterials(tenant.companyId, id);
+
   const m = projectMetrics(
     project.contractValueMinor,
-    txns.map((t) => ({ type: t.type, amountMinor: t.amountMinor }))
+    txns.map((t) => ({ type: t.type, amountMinor: t.amountMinor })),
+    materials.costMinor
   );
   const writable = canWrite(tenant.role);
 
@@ -134,6 +140,12 @@ export default async function ProjectPage({
           <div className="label">Расходы на проект</div>
           <div className="value">{formatMoney(m.expensesMinor)}</div>
           <div className="hint">
+            {m.materialsCostMinor > 0n && (
+              <>
+                Из них материалов со склада: {formatMoney(m.materialsCostMinor)}
+                <br />
+              </>
+            )}
             {costOverrun === null
               ? "Плановая себестоимость не задана"
               : costOverrun > 0n
@@ -159,6 +171,60 @@ export default async function ProjectPage({
           </div>
         </div>
       </div>
+
+      {materials.rows.length > 0 && (
+        <>
+          <h2>Материалы со склада</h2>
+          <p className="steps no-print">
+            Списано на этот проект в разделе <Link href="/stock/moves">Склад → Движения</Link>.
+            Деньги за материалы ушли раньше — при закупке; затратой заказа они становятся в момент
+            списания, по цене той партии, из которой ушли.
+          </p>
+          {materials.uncoveredQuantity > 0 && (
+            <div className="alert error">
+              Часть материалов списана без оформленного прихода — их себестоимость не посчитана, и
+              маржа проекта завышена.
+            </div>
+          )}
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Дата</th>
+                  <th>Материал</th>
+                  <th className="num">Количество</th>
+                  <th className="num">Себестоимость</th>
+                  <th>Комментарий</th>
+                </tr>
+              </thead>
+              <tbody>
+                {materials.rows.map((r, i) => (
+                  <tr key={`${r.date.toISOString()}-${i}`}>
+                    <td>{formatDateRu(r.date)}</td>
+                    <td>{r.productName}</td>
+                    <td className="num">
+                      {formatQuantity(r.quantity)} <span className="muted">{r.unit}</span>
+                    </td>
+                    <td className="num expense">
+                      {r.uncoveredQuantity > 0 && r.costMinor === 0n ? (
+                        <span className="muted">нет данных</span>
+                      ) : (
+                        <>−{formatMoney(r.costMinor)}</>
+                      )}
+                    </td>
+                    <td className="muted">{r.comment ?? "—"}</td>
+                  </tr>
+                ))}
+                <tr className="total">
+                  <td colSpan={3}>Итого материалов</td>
+                  <td className="num expense">−{formatMoney(materials.costMinor)}</td>
+                  <td />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
 
       <h2>Операции проекта</h2>
       <p className="steps no-print">
