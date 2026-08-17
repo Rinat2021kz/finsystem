@@ -3,9 +3,44 @@ import { describe, expect, it } from "vitest";
 import {
   averageUnitPriceMinor,
   componentCostMinor,
+  costAtDate,
   soldGoodsCostMinor,
   unitCostFromComponents,
 } from "@/lib/calc/cost";
+
+describe("Себестоимость на дату (история цен)", () => {
+  // зерно дорожало: январь 8 000, март 9 500, июль 11 000 ₸ за кг
+  const history = [
+    { validFrom: new Date(Date.UTC(2025, 0, 1)), unitCostMinor: 800_000n },
+    { validFrom: new Date(Date.UTC(2025, 2, 1)), unitCostMinor: 950_000n },
+    { validFrom: new Date(Date.UTC(2025, 6, 1)), unitCostMinor: 1_100_000n },
+  ];
+
+  it("продажа в феврале считается по январской цене", () => {
+    expect(costAtDate(history, new Date(Date.UTC(2025, 1, 14)))).toBe(800_000n);
+  });
+
+  it("продажа в день смены цены считается уже по новой", () => {
+    expect(costAtDate(history, new Date(Date.UTC(2025, 2, 1)))).toBe(950_000n);
+  });
+
+  it("продажа в декабре — по последней действующей цене", () => {
+    expect(costAtDate(history, new Date(Date.UTC(2025, 11, 31)))).toBe(1_100_000n);
+  });
+
+  it("продажа раньше первой записи → null, а не сегодняшняя цена задним числом", () => {
+    expect(costAtDate(history, new Date(Date.UTC(2024, 11, 20)))).toBeNull();
+  });
+
+  it("пустая история → null («нет данных»)", () => {
+    expect(costAtDate([], new Date(Date.UTC(2025, 5, 1)))).toBeNull();
+  });
+
+  it("порядок записей в истории не важен", () => {
+    const shuffled = [history[2], history[0], history[1]];
+    expect(costAtDate(shuffled, new Date(Date.UTC(2025, 3, 1)))).toBe(950_000n);
+  });
+});
 
 describe("Компонент per_unit", () => {
   it("зерно: 0.018 кг × 9 000 ₸/кг = 162 ₸", () => {

@@ -72,7 +72,89 @@ export async function deleteComponentAction(formData: FormData): Promise<void> {
   revalidatePath(`/settings/products/${component.productId}`);
 }
 
-/** Записать посчитанную по составу себестоимость в карточку продукта. */
+/**
+ * Запись в историю себестоимости: «с такой-то даты единица стоит столько».
+ * Себестоимость в карточке продукта синхронизируется с последней по дате записью —
+ * карточка показывает действующую цену, история отвечает за прошлые периоды.
+ */
+export async function addCostHistoryAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const productId = String(formData.get("productId") ?? "");
+  const product = await prisma.product.findFirst({
+    where: { id: productId, companyId: tenant.companyId },
+  });
+  if (!product) return;
+
+  const raw = String(formData.get("validFrom") ?? "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  if (!match) return;
+  const validFrom = new Date(
+    Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]))
+  );
+
+  const cost = parseTenge(String(formData.get("unitCost") ?? "").trim());
+  if (cost === null || cost < 0n) return;
+
+  const comment = String(formData.get("comment") ?? "").trim().slice(0, 200) || null;
+
+  await prisma.productCostHistory.upsert({
+    where: { productId_validFrom: { productId, validFrom } },
+    create: {
+      companyId: tenant.companyId,
+      productId,
+      validFrom,
+      unitCostMinor: cost,
+      comment,
+    },
+    update: { unitCostMinor: cost, comment },
+  });
+
+  await syncCurrentCost(productId);
+  await logAudit({
+    companyId: tenant.companyId,
+    userId: tenant.userId,
+    entity: "product_cost_history",
+    entityId: product.id,
+    action: "create",
+    after: { validFrom: raw, unitCostMinor: cost.toString() },
+  });
+
+  revalidatePath(`/settings/products/${productId}`);
+  revalidatePath("/settings/products");
+}
+
+export async function deleteCostHistoryAction(formData: FormData): Promise<void> {
+  const tenant = await requireTenant();
+  if (!isAdmin(tenant.role)) return;
+
+  const id = String(formData.get("id") ?? "");
+  const entry = await prisma.productCostHistory.findFirst({
+    where: { id, companyId: tenant.companyId },
+  });
+  if (!entry) return;
+
+  await prisma.productCostHistory.delete({ where: { id: entry.id } });
+  await syncCurrentCost(entry.productId);
+  revalidatePath(`/settings/products/${entry.productId}`);
+  revalidatePath("/settings/products");
+}
+
+/** Карточка продукта показывает последнюю по дате себестоимость из истории. */
+async function syncCurrentCost(productId: string): Promise<void> {
+  const latest = await prisma.productCostHistory.findFirst({
+    where: { productId },
+    orderBy: { validFrom: "desc" },
+  });
+  if (!latest) return;
+  await prisma.product.update({
+    where: { id: productId },
+    data: { costPerUnitMinor: latest.unitCostMinor },
+  });
+}
+
+/** Записать посчитанную по составу себестоимость в карточку продукта и в историю. */
 export async function applyComputedCostAction(formData: FormData): Promise<void> {
   const tenant = await requireTenant();
   if (!isAdmin(tenant.role)) return;
@@ -84,6 +166,13 @@ export async function applyComputedCostAction(formData: FormData): Promise<void>
   });
   if (!product) return;
 
+  // дата, с которой действует пересчитанная себестоимость (по умолчанию — 1-е число месяца)
+  const raw = String(formData.get("validFrom") ?? "").trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(raw);
+  const validFrom = match
+    ? new Date(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])))
+    : null;
+
   const total = unitCostFromComponents(
     product.components.map((c) => ({
       kind: c.kind === "percent_of_price" ? ("percent_of_price" as const) : ("per_unit" as const),
@@ -94,10 +183,25 @@ export async function applyComputedCostAction(formData: FormData): Promise<void>
     product.basePriceMinor
   );
 
+  if (validFrom) {
+    await prisma.productCostHistory.upsert({
+      where: { productId_validFrom: { productId, validFrom } },
+      create: {
+        companyId: tenant.companyId,
+        productId,
+        validFrom,
+        unitCostMinor: total,
+        comment: "Расчёт по рецептуре",
+      },
+      update: { unitCostMinor: total, comment: "Расчёт по рецептуре" },
+    });
+  }
+
   await prisma.product.update({
     where: { id: product.id },
     data: { costPerUnitMinor: total },
   });
+  if (validFrom) await syncCurrentCost(productId);
   await logAudit({
     companyId: tenant.companyId,
     userId: tenant.userId,

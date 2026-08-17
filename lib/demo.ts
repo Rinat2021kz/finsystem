@@ -126,6 +126,7 @@ export async function resetDemoCompany(): Promise<string> {
   if (companyId) {
     // таблицы без FK-каскада на компанию чистим вручную
     await prisma.$transaction([
+      prisma.productCostHistory.deleteMany({ where: { companyId } }),
       prisma.salesPlan.deleteMany({ where: { companyId } }),
       prisma.expensePlan.deleteMany({ where: { companyId } }),
       prisma.investmentItem.deleteMany({ where: { companyId } }),
@@ -224,7 +225,15 @@ async function seedDemoCompany(): Promise<string> {
   const counterparties = await prisma.counterparty.findMany({ where: { companyId } });
   const cp = (name: string) => counterparties.find((c) => c.name === name)!.id;
 
-  // --- продукты и рецептура ---
+  // --- продукты, рецептура и история себестоимости ---
+  // Закупки идут в разные периоды: зерно и молоко дорожают, поэтому себестоимость
+  // единицы растёт ступеньками. Продажи прошлых месяцев считаются по цене того времени.
+  const COST_STEPS = [
+    { from: d(2025, 1, 1), factor: 1, comment: "Начало учёта" },
+    { from: d(2025, 7, 1), factor: 1.12, comment: "Подорожало зерно (+12 %)" },
+    { from: d(2026, 1, 1), factor: 1.25, comment: "Новый контракт с обжарщиком (+25 % к базе)" },
+  ];
+
   const productIds = new Map<string, string>();
   for (const drink of DRINKS) {
     const product = await prisma.product.create({
@@ -233,10 +242,22 @@ async function seedDemoCompany(): Promise<string> {
         name: drink.name,
         unit: drink.unit,
         basePriceMinor: drink.priceMinor,
-        costPerUnitMinor: drink.costMinor,
+        // в карточке — действующая (последняя) себестоимость
+        costPerUnitMinor: BigInt(
+          Math.round(Number(drink.costMinor) * COST_STEPS[COST_STEPS.length - 1].factor)
+        ),
       },
     });
     productIds.set(drink.name, product.id);
+    await prisma.productCostHistory.createMany({
+      data: COST_STEPS.map((step) => ({
+        companyId,
+        productId: product.id,
+        validFrom: step.from,
+        unitCostMinor: BigInt(Math.round(Number(drink.costMinor) * step.factor)),
+        comment: step.comment,
+      })),
+    });
     await prisma.productComponent.createMany({
       data: drink.components.map((c) => ({
         companyId,
@@ -250,12 +271,22 @@ async function seedDemoCompany(): Promise<string> {
       })),
     });
   }
-  // без рецептуры — себестоимость только из карточки (показывает оба режима)
+  // без рецептуры — себестоимость только из карточки и истории (показывает оба режима)
   const cheesecake = await prisma.product.create({
-    data: { companyId, name: "Чизкейк", unit: "шт", basePriceMinor: t(1800), costPerUnitMinor: t(700) },
+    data: { companyId, name: "Чизкейк", unit: "шт", basePriceMinor: t(1800), costPerUnitMinor: t(820) },
+  });
+  await prisma.productCostHistory.createMany({
+    data: [
+      { companyId, productId: cheesecake.id, validFrom: d(2025, 1, 1), unitCostMinor: t(700), comment: "Начало учёта" },
+      { companyId, productId: cheesecake.id, validFrom: d(2025, 9, 1), unitCostMinor: t(760), comment: "Подорожали сливки" },
+      { companyId, productId: cheesecake.id, validFrom: d(2026, 2, 1), unitCostMinor: t(820), comment: "Смена поставщика" },
+    ],
   });
   const catering = await prisma.product.create({
     data: { companyId, name: "Кофе-брейк (кейтеринг)", unit: "мероприятие", basePriceMinor: t(150_000), costPerUnitMinor: t(60_000) },
+  });
+  await prisma.productCostHistory.create({
+    data: { companyId, productId: catering.id, validFrom: d(2025, 1, 1), unitCostMinor: t(60_000), comment: "Начало учёта" },
   });
 
   // --- проекты (кейтеринг) ---

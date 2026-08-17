@@ -29,6 +29,29 @@ export function componentCostMinor(
   return (component.unitCostMinor * qtyThousandths) / 1_000n;
 }
 
+/** Запись истории себестоимости: «с этой даты единица стоит столько». */
+export interface CostHistoryEntry {
+  validFrom: Date;
+  unitCostMinor: bigint;
+}
+
+/**
+ * Себестоимость единицы, действовавшая на указанную дату:
+ * последняя запись истории с validFrom ≤ date.
+ * Если на эту дату истории ещё нет (продажа раньше первой закупки) — null,
+ * чтобы показать «нет данных», а не подставить сегодняшнюю цену задним числом.
+ */
+export function costAtDate(history: CostHistoryEntry[], date: Date): bigint | null {
+  let result: CostHistoryEntry | null = null;
+  for (const entry of history) {
+    if (entry.validFrom.getTime() > date.getTime()) continue;
+    if (result === null || entry.validFrom.getTime() > result.validFrom.getTime()) {
+      result = entry;
+    }
+  }
+  return result === null ? null : result.unitCostMinor;
+}
+
 /** Себестоимость проданного объёма: цена единицы × количество (до 2 знаков). */
 export function soldGoodsCostMinor(unitCostMinor: bigint, quantity: number): bigint {
   if (unitCostMinor <= 0n || !Number.isFinite(quantity) || quantity <= 0) return 0n;
