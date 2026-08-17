@@ -91,6 +91,17 @@ enum InvestmentSection {
   @@map("investment_section")
 }
 
+// Виды складских движений. Перемещение — не приход и не расход (аналог правила 3
+// для денег): общий остаток по компании не меняется, меняется остаток по складам.
+enum StockMoveType {
+  receipt  // приход: закупка, оприходование излишков
+  issue    // расход при продаже
+  transfer // перемещение между складами
+  writeoff // списание: брак, порча, расход в производство или на проект
+
+  @@map("stock_move_type")
+}
+
 // Группа статьи для ОПУ (расширение схемы: нужна для формул 6.2 SPEC —
 // переменные/постоянные/ФОТ/налоги/проценты/амортизация не выводимы из базовой схемы).
 enum PnlGroup {
@@ -135,6 +146,7 @@ model Company {
   capexMode           String   @default("simple") @map("capex_mode")
   projectsEnabled     Boolean  @default(false) @map("projects_enabled")
   investmentsEnabled  Boolean  @default(false) @map("investments_enabled")
+  stockEnabled        Boolean  @default(false) @map("stock_enabled")
   createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   owner          User             @relation("CompanyOwner", fields: [ownerUserId], references: [id], onDelete: Restrict)
@@ -146,6 +158,8 @@ model Company {
   projects       Project[]
   transactions   Transaction[]
   snapshots      ReportSnapshot[]
+  warehouses     Warehouse[]
+  stockMoves     StockMove[]
 
   @@map("companies")
 }
@@ -231,14 +245,78 @@ model Product {
   basePriceMinor   BigInt  @default(0) @map("base_price_minor")
   costPerUnitMinor BigInt  @default(0) @map("cost_per_unit_minor")
   isActive         Boolean @default(true) @map("is_active")
+  /** Группа товара для отчётов: «Кофе», «Выпечка», «Мебель». Плоская, без иерархии. */
+  productGroup     String? @map("product_group")
+  /** Продаётся клиенту (товар) или только расходуется в производстве (материал). */
+  isSellable       Boolean @default(true) @map("is_sellable")
+  /** Вести складские остатки. У услуг остатков нет. */
+  tracksStock      Boolean @default(false) @map("tracks_stock")
 
   company      Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   components   ProductComponent[]
   costHistory  ProductCostHistory[]
   transactions Transaction[]
+  stockMoves   StockMove[]
 
   @@index([companyId])
   @@map("products")
+}
+
+// Склад или торговая точка. Остатки товара считаются в разрезе складов,
+// себестоимость (FIFO) — в целом по компании: где физически лежит товар и
+// по какой цене он куплен — независимые измерения.
+model Warehouse {
+  id        String   @id @default(uuid()) @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  name      String
+  /** point — торговая точка, warehouse — склад, office — офис/производство. */
+  kind      String   @default("point")
+  address   String?
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  company   Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  movesFrom StockMove[] @relation("MoveWarehouseFrom")
+  movesTo   StockMove[] @relation("MoveWarehouseTo")
+
+  @@index([companyId])
+  @@map("warehouses")
+}
+
+// Складское движение. Остаток и себестоимость НЕ хранятся (правило 8) —
+// считаются на лету из движений функциями lib/calc/stock.ts.
+// unitCostMinor заполняется только у receipt: это цена закупки партии.
+model StockMove {
+  id              String        @id @default(uuid()) @db.Uuid
+  companyId       String        @map("company_id") @db.Uuid
+  date            DateTime      @db.Date
+  type            StockMoveType
+  productId       String        @map("product_id") @db.Uuid
+  warehouseFromId String?       @map("warehouse_from_id") @db.Uuid
+  warehouseToId   String?       @map("warehouse_to_id") @db.Uuid
+  /** Всегда положительное; знак задаёт тип движения. */
+  quantity        Decimal       @db.Decimal(14, 3)
+  unitCostMinor   BigInt?       @map("unit_cost_minor")
+  /** Денежная операция, породившая движение (оплата закупки, продажа). */
+  transactionId   String?       @map("transaction_id") @db.Uuid
+  /** Проект, на который списаны материалы. */
+  projectId       String?       @map("project_id") @db.Uuid
+  comment         String?
+  createdBy       String?       @map("created_by") @db.Uuid
+  createdAt       DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  company       Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  product       Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouseFrom Warehouse?   @relation("MoveWarehouseFrom", fields: [warehouseFromId], references: [id])
+  warehouseTo   Warehouse?   @relation("MoveWarehouseTo", fields: [warehouseToId], references: [id])
+  transaction   Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  project       Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, date])
+  @@index([companyId, productId, date])
+  @@index([transactionId])
+  @@index([projectId])
+  @@map("stock_moves")
 }
 
 // История себестоимости: закупки идут в разные периоды, цена меняется.
@@ -300,6 +378,7 @@ model Project {
 
   company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
   transactions Transaction[]
+  stockMoves   StockMove[]
 
   @@index([companyId])
   @@map("projects")
@@ -334,6 +413,7 @@ model Transaction {
   project      Project?      @relation(fields: [projectId], references: [id])
   counterparty Counterparty? @relation(fields: [counterpartyId], references: [id])
   product      Product?      @relation(fields: [productId], references: [id])
+  stockMoves   StockMove[]
 
   @@index([companyId, dateCashflow])
   @@index([companyId, periodPnl])
