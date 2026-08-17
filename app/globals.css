@@ -151,6 +151,11 @@ button.secondary, .btn.secondary { background: #eef1f6; color: var(--text); }
 button.secondary:hover, .btn.secondary:hover { background: #e2e7ef; }
 button.danger { background: var(--red); }
 
+/* Чекбокс с пояснением под ним: настройки модулей, признаки товара. */
+label.check { display: block; font-size: 0.92rem; line-height: 1.45; }
+label.check input[type="checkbox"] { vertical-align: middle; }
+label.check .muted { font-size: 0.85rem; }
+
 .toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
 
 .alert { padding: 12px 14px; border-radius: 8px; margin-bottom: 14px; font-size: 0.92rem; }

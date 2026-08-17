@@ -46,6 +46,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Link href="/dashboard">Дашборд</Link>
         <Link href="/transactions">Операции</Link>
         {company.projectsEnabled && <Link href="/projects">Проекты</Link>}
+        {company.stockEnabled && <Link href="/stock">Склад</Link>}
         <div className="section">Планирование</div>
         <Link href="/planning/sales">План продаж</Link>
         <Link href="/planning/expenses">План расходов</Link>
@@ -60,8 +61,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <Link href="/settings/accounts">Счета</Link>
         <Link href="/settings/categories">Категории</Link>
         <Link href="/settings/products">Продукты</Link>
+        {company.stockEnabled && <Link href="/settings/warehouses">Склады и точки</Link>}
         <Link href="/settings/counterparties">Контрагенты</Link>
         <Link href="/settings/team">Команда и доступ</Link>
+        <Link href="/settings/company">Настройки компании</Link>
         <div className="spacer" />
         <div className="user">
           {user?.name}

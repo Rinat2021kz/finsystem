@@ -16,11 +16,15 @@ export default async function ProductsPage({
 }) {
   const tenant = await requireTenant();
   const params = await searchParams;
-  const products = await prisma.product.findMany({
-    where: { companyId: tenant.companyId },
-    orderBy: { name: "asc" },
-  });
+  const [company, products] = await Promise.all([
+    prisma.company.findUnique({ where: { id: tenant.companyId } }),
+    prisma.product.findMany({
+      where: { companyId: tenant.companyId },
+      orderBy: [{ productGroup: "asc" }, { name: "asc" }],
+    }),
+  ]);
   const admin = isAdmin(tenant.role);
+  const stock = company?.stockEnabled ?? false;
 
   return (
     <>
@@ -46,6 +50,17 @@ export default async function ProductsPage({
         <br />• <strong>Маржа с единицы</strong> = цена − себестоимость: сколько денег приносит
         каждая продажа. Эту же цифру используйте в калькуляторах (юнит-экономика, точка
         безубыточности) и в плане расходов «на единицу продаж».
+        {stock && (
+          <>
+            <br />• <strong>Группа</strong> — для группировки в отчётах: «Кофе», «Выпечка»,
+            «Мебель». Необязательна.
+            <br />• <strong>Материал</strong> — то, что не продаётся клиенту, а расходуется в
+            производстве: стекло, фурнитура, зерно. Такие позиции не попадают в выбор при продаже,
+            но их можно списывать на заказ.
+            <br />• <strong>Остатки</strong> — включите для всего, что физически лежит на складе. У
+            услуг остатков не бывает.
+          </>
+        )}
       </div>
 
       {admin && (
@@ -67,6 +82,22 @@ export default async function ProductsPage({
               Переменная себестоимость единицы, ₸
               <input name="costPerUnit" inputMode="numeric" placeholder="0" />
             </label>
+            {stock && (
+              <>
+                <label className="field">
+                  Группа
+                  <input name="productGroup" placeholder="Кофе / Выпечка" />
+                </label>
+                <label className="field">
+                  Учёт
+                  <span style={{ fontSize: "0.85rem", lineHeight: 1.9 }}>
+                    <input type="checkbox" name="tracksStock" /> вести остатки
+                    <br />
+                    <input type="checkbox" name="isMaterial" /> это материал
+                  </span>
+                </label>
+              </>
+            )}
             <button type="submit">Добавить</button>
           </div>
         </form>
@@ -77,10 +108,12 @@ export default async function ProductsPage({
           <thead>
             <tr>
               <th>Продукт</th>
+              {stock && <th>Группа</th>}
               <th>Единица</th>
               <th className="num">Цена</th>
               <th className="num">Себестоимость ед.</th>
               <th className="num">Маржа с ед.</th>
+              {stock && <th>Склад</th>}
               <th>Статус</th>
               {admin && <th />}
             </tr>
@@ -88,7 +121,7 @@ export default async function ProductsPage({
           <tbody>
             {products.length === 0 && (
               <tr>
-                <td colSpan={7} className="muted">
+                <td colSpan={stock ? 9 : 7} className="muted">
                   Добавьте первый продукт или услугу
                 </td>
               </tr>
@@ -107,6 +140,20 @@ export default async function ProductsPage({
                       p.name
                     )}
                   </td>
+                  {stock && (
+                    <td className="muted">
+                      {admin ? (
+                        <input
+                          name="productGroup"
+                          form={formId}
+                          defaultValue={p.productGroup ?? ""}
+                          style={{ width: 110 }}
+                        />
+                      ) : (
+                        (p.productGroup ?? "—")
+                      )}
+                    </td>
+                  )}
                   <td className="muted">
                     {admin ? (
                       <input name="unit" form={formId} defaultValue={p.unit ?? ""} style={{ width: 70 }} />
@@ -148,6 +195,40 @@ export default async function ProductsPage({
                       состав →
                     </Link>
                   </td>
+                  {stock && (
+                    <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+                      {admin ? (
+                        <>
+                          <input
+                            type="checkbox"
+                            name="tracksStock"
+                            form={formId}
+                            defaultChecked={p.tracksStock}
+                          />{" "}
+                          остатки
+                          <br />
+                          <input
+                            type="checkbox"
+                            name="isMaterial"
+                            form={formId}
+                            defaultChecked={!p.isSellable}
+                          />{" "}
+                          материал
+                        </>
+                      ) : (
+                        <>
+                          {p.tracksStock ? "остатки" : "без остатков"}
+                          {!p.isSellable && " · материал"}
+                        </>
+                      )}
+                      {p.tracksStock && (
+                        <>
+                          <br />
+                          <Link href={`/stock/${p.id}`}>на складе →</Link>
+                        </>
+                      )}
+                    </td>
+                  )}
                   <td>
                     <span className={`badge ${p.isActive ? "green" : "gray"}`}>
                       {p.isActive ? "Активен" : "Скрыт"}
