@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { createTransactionAction, type TxnFormState } from "./actions";
 
 export interface Option {
@@ -20,6 +20,8 @@ export function TransactionForm({
   counterparties,
   projects = [],
   products = [],
+  warehouses = [],
+  stockProducts = [],
 }: {
   type: "income" | "expense" | "transfer";
   accounts: Option[];
@@ -27,13 +29,20 @@ export function TransactionForm({
   counterparties: Option[];
   projects?: Option[];
   products?: Option[];
+  /** Склады компании; пусто — складской модуль выключен. */
+  warehouses?: Option[];
+  /** Товары, по которым ведутся остатки. */
+  stockProducts?: Option[];
 }) {
   const [state, action, pending] = useActionState<TxnFormState, FormData>(
     createTransactionAction,
     {}
   );
+  const [productId, setProductId] = useState("");
   const today = new Date().toISOString().slice(0, 10);
   const currentYear = new Date().getFullYear();
+  // склад нужен только для товаров, по которым ведутся остатки
+  const tracksStock = productId !== "" && stockProducts.some((p) => p.id === productId);
 
   return (
     <form action={action} className="panel">
@@ -123,7 +132,11 @@ export function TransactionForm({
               <>
                 <label className="field">
                   Продукт (необязательно)
-                  <select name="productId" defaultValue="">
+                  <select
+                    name="productId"
+                    value={productId}
+                    onChange={(e) => setProductId(e.target.value)}
+                  >
                     <option value="">—</option>
                     {products.map((p) => (
                       <option key={p.id} value={p.id}>
@@ -136,6 +149,56 @@ export function TransactionForm({
                   Количество
                   <input name="quantity" inputMode="decimal" placeholder="Напр. 5" />
                 </label>
+                {tracksStock && warehouses.length > 0 && (
+                  <label className="field">
+                    Отгрузить со склада
+                    <select name="warehouseId" required>
+                      {warehouses.map((w) => (
+                        <option key={w.id} value={w.id}>
+                          {w.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                )}
+              </>
+            )}
+
+            {type === "expense" && warehouses.length > 0 && stockProducts.length > 0 && (
+              <>
+                <label className="field">
+                  Оприходовать товар
+                  <select
+                    name="productId"
+                    value={productId}
+                    onChange={(e) => setProductId(e.target.value)}
+                  >
+                    <option value="">— (обычный расход)</option>
+                    {stockProducts.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {productId && (
+                  <>
+                    <label className="field">
+                      Количество
+                      <input name="quantity" required inputMode="decimal" placeholder="Напр. 100" />
+                    </label>
+                    <label className="field">
+                      На склад
+                      <select name="warehouseId" required>
+                        {warehouses.map((w) => (
+                          <option key={w.id} value={w.id}>
+                            {w.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
               </>
             )}
             {counterparties.length > 0 && (
@@ -173,6 +236,14 @@ export function TransactionForm({
         <p className="muted" style={{ margin: "10px 0 0", fontSize: "0.85rem" }}>
           Если укажете продукт и количество, система посчитает фактическую среднюю цену и сравнит
           её с себестоимостью по рецептуре — на странице продукта в справочнике.
+          {tracksStock && " Проданное количество спишется со склада по цене той партии, которой товар был закуплен."}
+        </p>
+      )}
+      {type === "expense" && productId && stockProducts.some((p) => p.id === productId) && (
+        <p className="muted" style={{ margin: "10px 0 0", fontSize: "0.85rem" }}>
+          Это закупка товара: деньги уйдут сегодня, а в расходы ОПУ товар попадёт в тот месяц,
+          когда его продадут. Поэтому такая операция не уменьшает прибыль текущего месяца — иначе
+          расход посчитался бы дважды. Цена партии считается автоматически: сумма ÷ количество.
         </p>
       )}
       {type === "transfer" && (

@@ -10,6 +10,8 @@ import { loadCalcData } from "@/lib/reports";
 import { cashflowForAccount, cashflowSummary } from "@/lib/calc/cashflow";
 import { pnlForMonths } from "@/lib/calc/pnl";
 import { balanceReport } from "@/lib/calc/balance";
+import { cogsInRange } from "@/lib/calc/stock";
+import { loadStockMoves } from "@/lib/stock";
 import { monthsInRange, rangeFromSearchParams, snapToMonths } from "@/lib/range";
 import { COMPANY_COOKIE } from "@/lib/tenancy";
 
@@ -89,11 +91,15 @@ export async function GET(
     ws.columns = [{ width: 36 }, { width: 18 }];
     // ОПУ живёт по экономическим месяцам — период округляем до целых
     const pnlRange = snapToMonths(range);
-    const pnl = pnlForMonths(txns, monthsInRange(pnlRange.from, pnlRange.to));
+    // себестоимость проданных товаров берётся со склада по дате продажи
+    const moves = await loadStockMoves(companyId);
+    const goodsCostMinor = cogsInRange(moves, pnlRange.from, pnlRange.to).totalMinor;
+    const pnl = pnlForMonths(txns, monthsInRange(pnlRange.from, pnlRange.to), { goodsCostMinor });
     ws.addRow([`ОПУ за ${pnlRange.label}`]).font = { bold: true, size: 14 };
     ws.addRow([]);
     for (const [label, v] of [
       ["Выручка", pnl.revenueMinor],
+      ["Себестоимость проданных товаров", pnl.goodsCostMinor],
       ["Переменные расходы", pnl.variableExpensesMinor],
       ["Валовая прибыль", pnl.grossProfitMinor],
       ["Постоянные расходы", pnl.fixedExpensesMinor],

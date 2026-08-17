@@ -36,7 +36,8 @@ export default async function TransactionsPage({
   const range = rangeFromSearchParams(params);
   const filtered = hasRangeParams(params);
 
-  const [accounts, categories, counterparties, company, projects, products] = await Promise.all([
+  const [accounts, categories, counterparties, company, projects, products, warehouses] =
+    await Promise.all([
     prisma.account.findMany({
       where: { companyId: tenant.companyId, isActive: true },
       orderBy: { createdAt: "asc" },
@@ -58,6 +59,10 @@ export default async function TransactionsPage({
       orderBy: { createdAt: "desc" },
     }),
     prisma.product.findMany({
+      where: { companyId: tenant.companyId, isActive: true },
+      orderBy: { name: "asc" },
+    }),
+    prisma.warehouse.findMany({
       where: { companyId: tenant.companyId, isActive: true },
       orderBy: { name: "asc" },
     }),
@@ -137,6 +142,12 @@ export default async function TransactionsPage({
             id: p.id,
             name: p.unit ? `${p.name} (${p.unit})` : p.name,
           }))}
+          warehouses={
+            company?.stockEnabled ? warehouses.map((w) => ({ id: w.id, name: w.name })) : []
+          }
+          stockProducts={products
+            .filter((p) => p.tracksStock && company?.stockEnabled)
+            .map((p) => ({ id: p.id, name: p.unit ? `${p.name} (${p.unit})` : p.name }))}
         />
       )}
 

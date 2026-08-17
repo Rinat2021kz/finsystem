@@ -7,6 +7,12 @@ import type { CalcTxn } from "./types";
 
 export interface PnlReport {
   revenueMinor: bigint;
+  /**
+   * Себестоимость проданных и списанных товаров за период (из складского модуля).
+   * Признаётся в момент продажи, а не в момент закупки: закупленный впрок товар
+   * не должен обваливать прибыль того месяца, когда за него заплатили.
+   */
+  goodsCostMinor: bigint;
   variableExpensesMinor: bigint;
   grossProfitMinor: bigint;
   fixedExpensesMinor: bigint;
@@ -33,9 +39,14 @@ function inPnl(t: CalcTxn, months: Set<number>): boolean {
   return months.has(monthKey(t.periodPnl));
 }
 
+export interface PnlOptions {
+  /** Себестоимость проданных товаров за тот же период — из lib/calc/stock.ts. */
+  goodsCostMinor?: bigint;
+}
+
 /** ОПУ за месяц (month — 1-е число месяца). */
-export function pnlForMonth(txns: CalcTxn[], month: Date): PnlReport {
-  return pnlForMonths(txns, [month]);
+export function pnlForMonth(txns: CalcTxn[], month: Date, opts?: PnlOptions): PnlReport {
+  return pnlForMonths(txns, [month], opts);
 }
 
 /**
@@ -43,8 +54,9 @@ export function pnlForMonth(txns: CalcTxn[], month: Date): PnlReport {
  * Накопительный итог: показатели суммируются, рентабельность считается от суммарной выручки
  * (а не как среднее помесячных — это разные числа).
  */
-export function pnlForMonths(txns: CalcTxn[], months: Date[]): PnlReport {
+export function pnlForMonths(txns: CalcTxn[], months: Date[], opts?: PnlOptions): PnlReport {
   const keys = new Set(months.map(monthKey));
+  const goodsCost = opts?.goodsCostMinor ?? 0n;
   let revenue = 0n;
   let variable = 0n;
   let fixed = 0n;
@@ -87,12 +99,15 @@ export function pnlForMonths(txns: CalcTxn[], months: Date[]): PnlReport {
     }
   }
 
-  const grossProfit = revenue - variable;
+  // себестоимость товара — такой же переменный расход, но приходит не из операций,
+  // а из складских списаний: она привязана к дате продажи, а не к дате оплаты закупки
+  const grossProfit = revenue - variable - goodsCost;
   const operatingProfit = grossProfit - fixed - payroll - other;
   const netProfit = operatingProfit - taxes - interest - depreciation;
 
   return {
     revenueMinor: revenue,
+    goodsCostMinor: goodsCost,
     variableExpensesMinor: variable,
     grossProfitMinor: grossProfit,
     fixedExpensesMinor: fixed,

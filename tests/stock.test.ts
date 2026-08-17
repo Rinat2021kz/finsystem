@@ -12,6 +12,8 @@ import {
   stockValueMinor,
   type StockMoveCalc,
 } from "@/lib/calc/stock";
+import { pnlForMonth } from "@/lib/calc/pnl";
+import type { CalcTxn } from "@/lib/calc/types";
 
 const OFFICE = "wh-office";
 const POINT = "wh-point";
@@ -254,6 +256,54 @@ describe("Себестоимость проданных товаров за пе
   it("непокрытые расходы попадают в предупреждение периода", () => {
     const orphan = [move({ type: "issue", quantity: 7, warehouseFromId: OFFICE, date: d(2025, 4, 5) })];
     expect(cogsInRange(orphan, d(2025, 4, 1), d(2025, 4, 30)).uncoveredQuantity).toBe(7);
+  });
+});
+
+describe("Себестоимость товара в ОПУ", () => {
+  const march = new Date(Date.UTC(2025, 2, 1));
+  const may = new Date(Date.UTC(2025, 4, 1));
+
+  // выручка мая 500 000 ₸, аренда мая 100 000 ₸
+  const txns: CalcTxn[] = [
+    {
+      type: "income", amountMinor: 50_000_000n, periodPnl: may,
+      dateCashflow: may, includeInPnl: true, includeInCashflow: true,
+      affectsPnl: true, affectsCashflow: true, pnlGroup: "revenue",
+      accountFromId: null, accountToId: "acc",
+    },
+    {
+      type: "expense", amountMinor: 10_000_000n, periodPnl: may,
+      dateCashflow: may, includeInPnl: true, includeInCashflow: true,
+      affectsPnl: true, affectsCashflow: true, pnlGroup: "fixed",
+      accountFromId: "acc", accountToId: null,
+    },
+  ];
+
+  it("товар, купленный в марте и проданный в мае, уменьшает прибыль мая", () => {
+    // закупка 100 шт по 2 000 ₸ в марте, продажа 50 шт в мае → себестоимость 100 000 ₸
+    const moves = [
+      move({ type: "receipt", quantity: 100, warehouseToId: OFFICE, date: march, unitCostMinor: 200_000n }),
+      move({ type: "issue", quantity: 50, warehouseFromId: OFFICE, date: d(2025, 5, 12) }),
+    ];
+    const marchCogs = cogsInRange(moves, march, d(2025, 3, 31)).totalMinor;
+    const mayCogs = cogsInRange(moves, may, d(2025, 5, 31)).totalMinor;
+
+    expect(marchCogs).toBe(0n); // в марте только заплатили, ничего не продали
+    expect(mayCogs).toBe(10_000_000n);
+
+    const mayPnl = pnlForMonth(txns, may, { goodsCostMinor: mayCogs });
+    // 500 000 − 100 000 себестоимости = 400 000 валовой
+    expect(mayPnl.goodsCostMinor).toBe(10_000_000n);
+    expect(mayPnl.grossProfitMinor).toBe(40_000_000n);
+    // минус аренда 100 000 → чистая 300 000
+    expect(mayPnl.netProfitMinor).toBe(30_000_000n);
+  });
+
+  it("без складского модуля ОПУ считается ровно как раньше", () => {
+    const without = pnlForMonth(txns, may);
+    expect(without.goodsCostMinor).toBe(0n);
+    expect(without.grossProfitMinor).toBe(50_000_000n);
+    expect(without.netProfitMinor).toBe(40_000_000n);
   });
 });
 

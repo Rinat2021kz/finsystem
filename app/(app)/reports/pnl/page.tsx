@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { requireTenant, isAdmin } from "@/lib/tenancy";
 import { loadCalcData } from "@/lib/reports";
 import { pnlForMonth, pnlForMonths, type PnlReport } from "@/lib/calc/pnl";
+import { cogsInRange } from "@/lib/calc/stock";
+import { formatQuantity, loadStockMoves } from "@/lib/stock";
 import { formatMoney, formatPercent } from "@/lib/money";
 import { MONTH_NAMES_RU } from "@/lib/period";
 import { monthsInRange, rangeFromSearchParams, rangeToQuery, snapToMonths } from "@/lib/range";
@@ -15,10 +17,18 @@ interface PnlRow {
   get: (p: PnlReport) => bigint;
   strong?: boolean;
   negative?: boolean;
+  /** Строка показывается только при включённом складском модуле. */
+  stockOnly?: boolean;
 }
 
 const ROWS: PnlRow[] = [
   { label: "Выручка", get: (p) => p.revenueMinor, strong: true },
+  {
+    label: "Себестоимость проданных товаров",
+    get: (p) => p.goodsCostMinor,
+    negative: true,
+    stockOnly: true,
+  },
   { label: "Переменные расходы", get: (p) => p.variableExpensesMinor, negative: true },
   { label: "Валовая прибыль", get: (p) => p.grossProfitMinor, strong: true },
   { label: "Постоянные расходы", get: (p) => p.fixedExpensesMinor, negative: true },
@@ -49,9 +59,29 @@ export default async function PnlPage({
   const months = monthsInRange(range.from, range.to);
   const single = months.length === 1;
 
-  const { txns } = await loadCalcData(tenant.companyId);
-  const total = pnlForMonths(txns, months);
-  const monthly = months.map((m) => ({ month: m, pnl: pnlForMonth(txns, m) }));
+  const [{ txns }, company] = await Promise.all([
+    loadCalcData(tenant.companyId),
+    prisma.company.findUnique({ where: { id: tenant.companyId } }),
+  ]);
+
+  // Себестоимость товара приходит из складских списаний и признаётся по дате продажи.
+  // Без склада она равна нулю, и ОПУ считается ровно как раньше.
+  const stock = company?.stockEnabled ?? false;
+  const moves = stock ? await loadStockMoves(tenant.companyId) : [];
+  const monthEnd = (m: Date) => new Date(Date.UTC(m.getUTCFullYear(), m.getUTCMonth() + 1, 0));
+  const cogsTotal = stock
+    ? cogsInRange(moves, months[0], monthEnd(months[months.length - 1]))
+    : null;
+
+  const total = pnlForMonths(txns, months, { goodsCostMinor: cogsTotal?.totalMinor ?? 0n });
+  const monthly = months.map((m) => ({
+    month: m,
+    pnl: pnlForMonth(txns, m, {
+      goodsCostMinor: stock ? cogsInRange(moves, m, monthEnd(m)).totalMinor : 0n,
+    }),
+  }));
+
+  const rows = ROWS.filter((r) => !r.stockOnly || stock);
 
   // закрытие месяца применимо только к одному месяцу
   const snapshot = single
@@ -78,6 +108,15 @@ export default async function PnlPage({
         сюда не попадают вовсе. За период больше месяца показатели складываются: колонка «Итого»
         — это накопительный результат, а рентабельность в ней считается от суммарной выручки.
         «Закрыть месяц» фиксирует цифры: после закрытия операции месяца нельзя менять.
+        {stock && (
+          <>
+            {" "}
+            <strong>Себестоимость проданных товаров</strong> берётся со склада и признаётся в месяц
+            продажи, а не в месяц закупки: товар, купленный впрок в марте и проданный в мае,
+            уменьшит прибыль мая. Поэтому закупка товара сама по себе в расходы ОПУ не попадает —
+            иначе расход посчитался бы дважды.
+          </>
+        )}
       </HelpNote>
       <div className="toolbar no-print">
         <a className="btn secondary" href={`/api/export/pnl?${rangeToQuery(range)}`}>
@@ -115,6 +154,13 @@ export default async function PnlPage({
           отдельно (период «Месяц»).
         </div>
       )}
+      {cogsTotal !== null && cogsTotal.uncoveredQuantity > 0 && (
+        <div className="alert error">
+          {formatQuantity(cogsTotal.uncoveredQuantity)} ед. товара продано или списано без
+          оформленного прихода — себестоимость по ним не посчитана, и прибыль в этом отчёте
+          завышена. Проверьте <a href="/stock">остатки на складах</a>.
+        </div>
+      )}
 
       <div className="table-wrap">
         <table>
@@ -132,7 +178,7 @@ export default async function PnlPage({
             </tr>
           </thead>
           <tbody>
-            {ROWS.map((r) => (
+            {rows.map((r) => (
               <tr key={r.label} className={r.strong ? "total" : ""}>
                 <td>{r.label}</td>
                 {!single &&

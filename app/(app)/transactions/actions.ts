@@ -9,6 +9,8 @@ import { parseTenge } from "@/lib/money";
 import { toMonthStart } from "@/lib/period";
 import { assertMonthsOpen } from "@/lib/months";
 import { logAudit } from "@/lib/audit";
+import { availableQuantity } from "@/lib/calc/stock";
+import { formatQuantity, loadStockMoves } from "@/lib/stock";
 
 const baseSchema = z.object({
   type: z.enum(["income", "expense", "transfer"]),
@@ -23,6 +25,8 @@ const baseSchema = z.object({
   projectId: z.string().uuid().optional(),
   productId: z.string().uuid().optional(),
   quantity: z.coerce.number().positive().max(99_999_999).optional(),
+  // склад: куда оприходовать закупку / откуда отгрузить проданное
+  warehouseId: z.string().uuid().optional(),
   comment: z.string().trim().max(500).optional(),
 });
 
@@ -56,6 +60,7 @@ export async function createTransactionAction(
     projectId: formData.get("projectId") || undefined,
     productId: formData.get("productId") || undefined,
     quantity: String(formData.get("quantity") ?? "").replace(",", ".").trim() || undefined,
+    warehouseId: formData.get("warehouseId") || undefined,
     comment: formData.get("comment") || undefined,
   });
   if (!parsed.success) {
@@ -100,13 +105,49 @@ export async function createTransactionAction(
     });
     if (!project) return { error: "Проект не найден" };
   }
-  // продукт и количество — только для дохода (факт-проверка себестоимости)
-  if (d.type === "income" && d.productId) {
-    const product = await prisma.product.findFirst({
+  // продукт: у дохода — факт-проверка себестоимости, у расхода — оприходование закупки
+  let product = null;
+  if (d.type !== "transfer" && d.productId) {
+    product = await prisma.product.findFirst({
       where: { id: d.productId, companyId: tenant.companyId },
     });
     if (!product) return { error: "Продукт не найден" };
   }
+
+  // Складское движение создаётся вместе с операцией, если указаны товар, количество и склад.
+  // Расход + приход товара = закупка: она НЕ попадает в расходы ОПУ, потому что
+  // себестоимость признаётся при продаже (иначе расход посчитался бы дважды).
+  const stockQuantity = d.quantity ?? (d.productId ? 1 : undefined);
+  const stockMove =
+    d.type !== "transfer" && product?.tracksStock && d.warehouseId && d.productId && stockQuantity
+      ? { warehouseId: d.warehouseId, productId: d.productId, quantity: stockQuantity }
+      : null;
+
+  if (stockMove && product) {
+    const warehouse = await prisma.warehouse.findFirst({
+      where: { id: stockMove.warehouseId, companyId: tenant.companyId },
+    });
+    if (!warehouse) return { error: "Склад не найден" };
+
+    if (d.type === "income") {
+      const existing = await loadStockMoves(tenant.companyId, stockMove.productId);
+      const available = availableQuantity(existing, {
+        productId: stockMove.productId,
+        warehouseId: stockMove.warehouseId,
+        onDate: d.dateCashflow,
+      });
+      if (available < stockMove.quantity) {
+        return {
+          error:
+            `На складе «${warehouse.name}» доступно ${formatQuantity(available)} ` +
+            `${product.unit ?? "ед."} — меньше, чем продано (${formatQuantity(stockMove.quantity)}). ` +
+            `Сначала оформите приход товара на складе.`,
+        };
+      }
+    }
+  }
+
+  const goodsPurchase = stockMove !== null && d.type === "expense";
 
   // закрытый месяц неизменяем (правило 5)
   const closedError = await assertMonthsOpen(tenant.companyId, [d.dateCashflow, periodPnl]);
@@ -118,20 +159,42 @@ export async function createTransactionAction(
       type: d.type,
       amountMinor,
       dateCashflow: d.dateCashflow,
-      periodPnl,
-      includeInPnl: d.type !== "transfer" && d.includeInPnl,
+      periodPnl: goodsPurchase ? null : periodPnl,
+      includeInPnl: d.type !== "transfer" && d.includeInPnl && !goodsPurchase,
       categoryId: d.type === "transfer" ? null : (d.categoryId ?? null),
       accountFromId: d.type === "income" ? null : (d.accountFromId ?? null),
       accountToId: d.type === "expense" ? null : (d.accountToId ?? null),
       counterpartyId: d.counterpartyId ?? null,
       projectId: d.type === "transfer" ? null : (d.projectId ?? null),
-      productId: d.type === "income" ? (d.productId ?? null) : null,
+      productId: d.type === "transfer" ? null : (d.productId ?? null),
       // если продукт выбран, а количество не заполнено — считаем 1
-      quantity: d.type === "income" && d.productId ? (d.quantity ?? 1) : null,
+      quantity: d.type !== "transfer" && d.productId ? (d.quantity ?? 1) : null,
       comment: d.comment ?? null,
       createdBy: tenant.userId,
     },
   });
+
+  if (stockMove) {
+    const qtyMilli = BigInt(Math.round(stockMove.quantity * 1000));
+    await prisma.stockMove.create({
+      data: {
+        companyId: tenant.companyId,
+        date: d.dateCashflow,
+        type: d.type === "expense" ? "receipt" : "issue",
+        productId: stockMove.productId,
+        // приход — только «куда», отгрузка — только «откуда»
+        warehouseToId: d.type === "expense" ? stockMove.warehouseId : null,
+        warehouseFromId: d.type === "income" ? stockMove.warehouseId : null,
+        quantity: stockMove.quantity,
+        // цена партии = сумма закупки / количество
+        unitCostMinor:
+          d.type === "expense" && qtyMilli > 0n ? (amountMinor * 1000n) / qtyMilli : null,
+        transactionId: txn.id,
+        comment: d.comment ?? null,
+        createdBy: tenant.userId,
+      },
+    });
+  }
 
   await logAudit({
     companyId: tenant.companyId,
@@ -144,6 +207,8 @@ export async function createTransactionAction(
 
   revalidatePath("/transactions");
   revalidatePath("/dashboard");
+  revalidatePath("/stock");
+  revalidatePath("/reports/pnl");
   redirect("/transactions?added=1");
 }
 
@@ -160,6 +225,9 @@ export async function deleteTransactionAction(formData: FormData): Promise<void>
   const closedError = await assertMonthsOpen(tenant.companyId, [txn.dateCashflow, txn.periodPnl]);
   if (closedError) redirect("/transactions?error=closed");
 
+  // движение, созданное вместе с операцией, удаляется вместе с ней:
+  // иначе на складе остался бы приход без оплаты
+  await prisma.stockMove.deleteMany({ where: { transactionId: txn.id } });
   await prisma.transaction.delete({ where: { id: txn.id } });
   await logAudit({
     companyId: tenant.companyId,
